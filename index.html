@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="vi">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multi-Project GP Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Sora:wght@600;700&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="/styles.css">
+</head>
+
+<body>
+    <main class="shell">
+        <header class="topbar">
+            <div>
+                <p class="eyebrow">GP Dashboard</p>
+                <h1>Multi-project từ 01/01/2026</h1>
+            </div>
+            <div class="actions">
+                <label class="search-field">
+                    <span>Search</span>
+                    <input id="searchInput" type="search" placeholder="Project, BG, customer, tag..." autocomplete="off">
+                </label>
+                <button id="refreshButton" type="button">Refresh</button>
+            </div>
+        </header>
+
+        <section class="status-line">
+            <span id="statusText">Đang tải toàn bộ project...</span>
+            <span>Cập nhật: <strong id="fetchedAt">-</strong></span>
+        </section>
+
+        <section class="metric-grid" aria-label="KPI tổng quan">
+            <article class="metric-card">
+                <span>Tổng BG untaxed</span>
+                <strong id="totalBgValue">-</strong>
+            </article>
+            <article class="metric-card">
+                <span>Tổng Native Expected Cost</span>
+                <strong id="totalCostValue">-</strong>
+            </article>
+            <article class="metric-card result-card">
+                <span>GP weighted</span>
+                <strong id="weightedGpValue">-</strong>
+            </article>
+            <article class="metric-card">
+                <span>Project hợp lệ</span>
+                <strong id="validProjectValue">-</strong>
+            </article>
+        </section>
+
+        <section class="section-block">
+            <div class="section-heading">
+                <div>
+                    <p class="eyebrow">Projects</p>
+                    <h2>Danh sách BG</h2>
+                </div>
+            </div>
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>BG Untaxed</th>
+                            <th>Native Expected Cost</th>
+                            <th>Margin / GP%</th>
+                        </tr>
+                    </thead>
+                    <tbody id="projectTableBody"></tbody>
+                </table>
+                <p id="emptyState" class="empty-state" hidden>Không có project khớp search.</p>
+            </div>
+        </section>
+
+        <section class="analysis-layout">
+            <div class="section-block">
+                <div class="section-heading">
+                    <div>
+                        <p class="eyebrow">Tag x tier</p>
+                        <h2>GP trung bình</h2>
+                    </div>
+                </div>
+                <div id="tagBuckets" class="analysis-grid"></div>
+            </div>
+
+            <div class="section-block">
+                <div class="section-heading">
+                    <div>
+                        <p class="eyebrow">Rank 3%</p>
+                        <h2>Khoảng GP phổ biến</h2>
+                    </div>
+                </div>
+                <div id="tagRanks" class="analysis-grid"></div>
+            </div>
+        </section>
+    </main>
+
+    <script type="module" src="/app.js"></script>
+</body>
+
+</html>
