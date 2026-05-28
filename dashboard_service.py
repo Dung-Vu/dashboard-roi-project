@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
@@ -9,12 +10,16 @@ from time import monotonic
 from typing import Any
 
 from odoo_client import OdooAPI, OdooAPIError
+from cache import PersistentCache
+
+
+logger = logging.getLogger(__name__)
 
 
 TWO_DECIMALS = Decimal("0.01")
-PROJECTS_DASHBOARD_TTL_SECONDS = 600
-PROJECTS_DASHBOARD_MAX_WORKERS = 8
-DASHBOARD_TARGET_TAGS = ("Nội thất rời", "Giấy dán tường", "Rèm")
+PROJECTS_DASHBOARD_TTL_SECONDS = 1800  # 30 minutes
+PROJECTS_DASHBOARD_MAX_WORKERS = 24
+DASHBOARD_TARGET_TAGS = ("Nội thất rời", "Giấy dán tường", "Rèm", "Vải nội thất")
 BG_TIERS = (
     ("<10tr", Decimal("10000000")),
     ("10-100tr", Decimal("100000000")),
@@ -51,7 +56,9 @@ def as_decimal(value: Any) -> Decimal:
     return Decimal(str(value or 0))
 
 
-def as_money(value: Decimal) -> float:
+def as_money(value: Decimal | int | float) -> float:
+    if isinstance(value, (int, float)):
+        value = Decimal(str(value))
     return float(value.quantize(TWO_DECIMALS, rounding=ROUND_HALF_UP))
 
 
@@ -72,6 +79,7 @@ class DashboardService:
         self.client = client
         self._projects_dashboard_cache: dict[str, tuple[float, dict[str, Any]]] = {}
         self._cache_lock = Lock()
+        self._db_cache = PersistentCache()
 
     def test_connection(self) -> dict[str, Any]:
         return self.client.test_connection()
@@ -79,6 +87,9 @@ class DashboardService:
     def build_projects_dashboard(self, date_from: str = "2026-01-01", *, refresh: bool = False) -> dict[str, Any]:
         date_from = self._normalize_date_from(date_from)
         cache_key = date_from
+        if refresh:
+            self._db_cache.clear("profitability:")
+            logger.info("Cleared profitability cache for refresh")
         if not refresh:
             with self._cache_lock:
                 cached = self._projects_dashboard_cache.get(cache_key)
@@ -87,13 +98,25 @@ class DashboardService:
 
         sale_orders = self._get_dashboard_sale_orders(date_from)
         sale_order_ids = [order["id"] for order in sale_orders]
-        projects = self._get_projects_for_sale_orders(sale_order_ids)
         sale_orders_by_id = {order["id"]: order for order in sale_orders}
         tag_map = self._get_sale_order_tag_map(sale_orders)
+        
+        # Filter: chỉ giữ sale orders có ít nhất 1 tag trong target tags
+        filtered_so_ids = [so_id for so_id, tags in tag_map.items() if tags]
+        if not filtered_so_ids:
+            # Không có SO nào match tags
+            return self._build_empty_dashboard(date_from)
+        
+        projects = self._get_projects_for_sale_orders(filtered_so_ids)
+        sale_orders_by_id = {so_id: sale_orders_by_id[so_id] for so_id in filtered_so_ids if so_id in sale_orders_by_id}
 
         rows: list[dict[str, Any]] = []
         if projects:
             worker_count = min(PROJECTS_DASHBOARD_MAX_WORKERS, len(projects))
+            logger.info(f"Fetching {len(projects)} projects with {worker_count} workers...")
+            completed = 0
+            total = len(projects)
+            
             with ThreadPoolExecutor(max_workers=worker_count) as executor:
                 futures = [
                     executor.submit(
@@ -106,19 +129,46 @@ class DashboardService:
                 ]
                 for future in as_completed(futures):
                     rows.append(future.result())
+                    completed += 1
+                    if completed % 50 == 0 or completed == total:
+                        logger.info(f"Progress: {completed}/{total} projects")
 
         rows.sort(key=lambda row: (row.get("date_order") or "", row.get("sale_order_name") or "", row["project_id"]), reverse=True)
+        
+        # Filter rows for statistics: chỉ tính summary/buckets/ranks với Order State = Done
+        done_rows = [row for row in rows if row.get("order_state") == "Done"]
+        
         payload = {
             "projects": rows,
-            "summary": self._build_projects_dashboard_summary(rows),
-            "tag_buckets": self._build_tag_buckets(rows),
-            "tag_gp_ranks": self._build_tag_gp_ranks(rows),
+            "summary": self._build_projects_dashboard_summary(done_rows),
+            "tag_buckets": self._build_tag_buckets(done_rows),
+            "tag_gp_ranks": self._build_tag_gp_ranks(done_rows),
             "date_from": date_from,
             "fetched_at": datetime.now(timezone.utc).isoformat(),
         }
 
         with self._cache_lock:
             self._projects_dashboard_cache[cache_key] = (monotonic(), payload)
+        return payload
+
+    def _build_empty_dashboard(self, date_from: str) -> dict[str, Any]:
+        payload = {
+            "projects": [],
+            "summary": {
+                "total_projects": 0,
+                "valid_project_count": 0,
+                "total_bg_untaxed": 0,
+                "total_native_expected_cost": 0,
+                "total_gp_amount": 0,
+                "weighted_gp_percent": 0,
+            },
+            "tag_buckets": {},
+            "tag_gp_ranks": {},
+            "date_from": date_from,
+            "fetched_at": datetime.now(timezone.utc).isoformat(),
+        }
+        with self._cache_lock:
+            self._projects_dashboard_cache[date_from] = (monotonic(), payload)
         return payload
 
     def _normalize_date_from(self, date_from: str) -> str:
@@ -142,6 +192,7 @@ class DashboardService:
                 "date_order",
                 "amount_untaxed",
                 "x_sale_order_tag_ids",
+                "x_studio_selection_field_q4_1imrcsjj8",
             ],
         )
 
@@ -179,6 +230,7 @@ class DashboardService:
             "customer": relation_name(sale_order.get("partner_id")) or relation_name(project.get("partner_id")),
             "date_order": sale_order.get("date_order"),
             "tags": tag_map.get(sale_order_id or 0, []),
+            "order_state": sale_order.get("x_studio_selection_field_q4_1imrcsjj8") or "",
             "bg_untaxed": as_money(bg_untaxed),
             "native_expected_cost": as_money(native_expected_cost),
             "gp_amount": as_money(gp_amount),
@@ -352,12 +404,13 @@ class DashboardService:
                 relation_models.append(fallback)
 
         for model in relation_models:
-            try:
-                tags = self.client.search_read(model, [["id", "in", tag_ids]], ["id", "name"])
-            except OdooAPIError:
-                continue
-            if tags:
-                return {tag["id"]: tag.get("name") or "" for tag in tags}
+            for name_field in ("name", "x_name", "display_name"):
+                try:
+                    tags = self.client.search_read(model, [["id", "in", tag_ids]], ["id", name_field])
+                except OdooAPIError:
+                    continue
+                if tags:
+                    return {tag["id"]: tag.get(name_field) or tag.get("display_name") or "" for tag in tags}
         return {}
 
     def _extract_relation_ids(self, value: Any) -> list[int]:
@@ -440,6 +493,16 @@ class DashboardService:
         }
 
     def _get_profitability_costs(self, project_id: int) -> dict[str, Decimal | dict[str, dict[str, Decimal]]]:
+        cache_key = f"profitability:{project_id}"
+        cached = self._db_cache.get(cache_key)
+        if cached is not None:
+            return {
+                "billed_cost_total": as_decimal(cached.get("billed_cost_total")),
+                "open_commitment_total": as_decimal(cached.get("open_commitment_total")),
+                "expected_cost_total": as_decimal(cached.get("expected_cost_total")),
+                "breakdown": {k: {kk: as_decimal(vv) for kk, vv in v.items()} for k, v in cached.get("breakdown", {}).items()},
+                "items": [],
+            }
         try:
             panel = self.client.call_method("project.project", "get_panel_data", [[project_id]])
         except OdooAPIError:
@@ -488,13 +551,24 @@ class DashboardService:
             billed_cost_total += billed_cost
             open_commitment_total += open_commitment
 
-        return {
+        result = {
             "billed_cost_total": billed_cost_total,
             "open_commitment_total": open_commitment_total,
             "expected_cost_total": billed_cost_total + open_commitment_total,
             "breakdown": breakdown,
             "items": items,
         }
+        
+        # Cache to SQLite (serialize Decimal to string)
+        cache_data = {
+            "billed_cost_total": str(billed_cost_total),
+            "open_commitment_total": str(open_commitment_total),
+            "expected_cost_total": str(billed_cost_total + open_commitment_total),
+            "breakdown": {k: {kk: str(vv) for kk, vv in v.items()} for k, v in breakdown.items()},
+        }
+        self._db_cache.set(cache_key, cache_data)
+        
+        return result
 
     def _serialize_profitability_costs(
         self,

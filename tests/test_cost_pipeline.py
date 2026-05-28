@@ -252,6 +252,7 @@ class ProjectsDashboardTest(unittest.TestCase):
                         "date_order": "2026-01-02 09:00:00",
                         "amount_untaxed": 100_000_000,
                         "x_sale_order_tag_ids": [101, 102],
+                        "x_studio_selection_field_q4_1imrcsjj8": "Done",
                     },
                     {
                         "id": 11,
@@ -260,6 +261,7 @@ class ProjectsDashboardTest(unittest.TestCase):
                         "date_order": "2026-02-03 09:00:00",
                         "amount_untaxed": 200_000_000,
                         "x_sale_order_tag_ids": [101],
+                        "x_studio_selection_field_q4_1imrcsjj8": "Done",
                     },
                     {
                         "id": 12,
@@ -268,6 +270,7 @@ class ProjectsDashboardTest(unittest.TestCase):
                         "date_order": "2026-03-04 09:00:00",
                         "amount_untaxed": 0,
                         "x_sale_order_tag_ids": [103],
+                        "x_studio_selection_field_q4_1imrcsjj8": "Done",
                     },
                 ],
                 "project.project": [

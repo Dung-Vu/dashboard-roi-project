@@ -9,7 +9,9 @@ __pycache__/
 dist/
 build/
 .venv/
-venv/
+
+# Cache
+.cache.db
 
 # Claude Code
 .claude/

@@ -1,105 +1,178 @@
 <!DOCTYPE html>
 <html lang="vi">
-
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Multi-Project GP Dashboard</title>
+    <title>Bonario ROI Dashboard</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link
-        href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Sora:wght@600;700&display=swap"
-        rel="stylesheet">
-    <link rel="stylesheet" href="/styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <link rel="stylesheet" href="styles.css">
 </head>
-
 <body>
-    <main class="shell">
-        <header class="topbar">
-            <div>
-                <p class="eyebrow">GP Dashboard</p>
-                <h1>Multi-project từ 01/01/2026</h1>
-            </div>
-            <div class="actions">
-                <label class="search-field">
-                    <span>Search</span>
-                    <input id="searchInput" type="search" placeholder="Project, BG, customer, tag..." autocomplete="off">
-                </label>
-                <button id="refreshButton" type="button">Refresh</button>
+    <div class="app">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-content">
+                <div class="header-left">
+                    <h1 class="header-title">
+                        <i class="fas fa-chart-line"></i>
+                        Bonario ROI Dashboard
+                    </h1>
+                    <p class="header-subtitle">Phân tích hiệu suất dự án</p>
+                </div>
+                <div class="header-right">
+                    <div class="date-picker">
+                        <label for="dateFrom">Từ ngày:</label>
+                        <input type="date" id="dateFrom" value="2026-01-01">
+                    </div>
+                    <button id="refreshBtn" class="btn btn-primary">
+                        <i class="fas fa-sync-alt"></i>
+                        <span>Làm mới</span>
+                    </button>
+                </div>
             </div>
         </header>
 
-        <section class="status-line">
-            <span id="statusText">Đang tải toàn bộ project...</span>
-            <span>Cập nhật: <strong id="fetchedAt">-</strong></span>
-        </section>
+        <!-- Loading State -->
+        <div id="loadingState" class="loading-state">
+            <div class="spinner"></div>
+            <p>Đang tải dữ liệu...</p>
+        </div>
 
-        <section class="metric-grid" aria-label="KPI tổng quan">
-            <article class="metric-card">
-                <span>Tổng BG untaxed</span>
-                <strong id="totalBgValue">-</strong>
-            </article>
-            <article class="metric-card">
-                <span>Tổng Native Expected Cost</span>
-                <strong id="totalCostValue">-</strong>
-            </article>
-            <article class="metric-card result-card">
-                <span>GP weighted</span>
-                <strong id="weightedGpValue">-</strong>
-            </article>
-            <article class="metric-card">
-                <span>Project hợp lệ</span>
-                <strong id="validProjectValue">-</strong>
-            </article>
-        </section>
+        <!-- Error State -->
+        <div id="errorState" class="error-state" style="display: none;">
+            <i class="fas fa-exclamation-triangle"></i>
+            <p id="errorMessage">Có lỗi xảy ra</p>
+            <button onclick="location.reload()" class="btn btn-primary">Thử lại</button>
+        </div>
 
-        <section class="section-block">
-            <div class="section-heading">
-                <div>
-                    <p class="eyebrow">Projects</p>
-                    <h2>Danh sách BG</h2>
-                </div>
-            </div>
-            <div class="table-wrap">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Name</th>
-                            <th>BG Untaxed</th>
-                            <th>Native Expected Cost</th>
-                            <th>Margin / GP%</th>
-                        </tr>
-                    </thead>
-                    <tbody id="projectTableBody"></tbody>
-                </table>
-                <p id="emptyState" class="empty-state" hidden>Không có project khớp search.</p>
-            </div>
-        </section>
-
-        <section class="analysis-layout">
-            <div class="section-block">
-                <div class="section-heading">
-                    <div>
-                        <p class="eyebrow">Tag x tier</p>
-                        <h2>GP trung bình</h2>
+        <!-- Main Content -->
+        <main id="mainContent" class="main-content" style="display: none;">
+            <!-- KPI Summary Cards -->
+            <section class="kpi-section">
+                <div class="kpi-grid">
+                    <div class="kpi-card">
+                        <div class="kpi-icon blue">
+                            <i class="fas fa-project-diagram"></i>
+                        </div>
+                        <div class="kpi-content">
+                            <div class="kpi-label">Tổng dự án</div>
+                            <div class="kpi-value" id="totalProjects">0</div>
+                            <div class="kpi-subtitle" id="validProjects">0 dự án hợp lệ</div>
+                        </div>
+                    </div>
+                    <div class="kpi-card">
+                        <div class="kpi-icon green">
+                            <i class="fas fa-dollar-sign"></i>
+                        </div>
+                        <div class="kpi-content">
+                            <div class="kpi-label">Tổng BG</div>
+                            <div class="kpi-value" id="totalBG">0</div>
+                            <div class="kpi-subtitle">Untaxed</div>
+                        </div>
+                    </div>
+                    <div class="kpi-card">
+                        <div class="kpi-icon orange">
+                            <i class="fas fa-coins"></i>
+                        </div>
+                        <div class="kpi-content">
+                            <div class="kpi-label">Chi phí dự kiến</div>
+                            <div class="kpi-value" id="totalCost">0</div>
+                            <div class="kpi-subtitle">Native Expected</div>
+                        </div>
+                    </div>
+                    <div class="kpi-card">
+                        <div class="kpi-icon purple">
+                            <i class="fas fa-percentage"></i>
+                        </div>
+                        <div class="kpi-content">
+                            <div class="kpi-label">Lợi nhuận gộp</div>
+                            <div class="kpi-value" id="totalGP">0</div>
+                            <div class="kpi-subtitle" id="weightedGP">0% weighted</div>
+                        </div>
                     </div>
                 </div>
-                <div id="tagBuckets" class="analysis-grid"></div>
-            </div>
+            </section>
 
-            <div class="section-block">
-                <div class="section-heading">
-                    <div>
-                        <p class="eyebrow">Rank 3%</p>
-                        <h2>Khoảng GP phổ biến</h2>
+            <!-- Tag Analysis Section -->
+            <section class="section">
+                <h2 class="section-title">
+                    <i class="fas fa-tags"></i>
+                    Phân tích theo Tag
+                </h2>
+                <div id="tagAnalysis" class="tag-analysis"></div>
+            </section>
+
+            <!-- GP Distribution Chart -->
+            <section class="section">
+                <h2 class="section-title">
+                    <i class="fas fa-chart-bar"></i>
+                    Phân bố GP% theo Tag
+                </h2>
+                <div class="chart-container">
+                    <canvas id="gpChart"></canvas>
+                </div>
+            </section>
+
+            <!-- Projects Table -->
+            <section class="section">
+                <div class="section-header">
+                    <h2 class="section-title">
+                        <i class="fas fa-list"></i>
+                        Danh sách dự án
+                    </h2>
+                    <div class="table-controls">
+                        <div class="search-box">
+                            <i class="fas fa-search"></i>
+                            <input type="text" id="searchInput" placeholder="Tìm kiếm dự án, khách hàng...">
+                        </div>
+                        <select id="tagFilter" class="filter-select">
+                            <option value="">Tất cả tags</option>
+                        </select>
+                        <select id="stateFilter" class="filter-select">
+                            <option value="">Tất cả trạng thái</option>
+                            <option value="Done">Hoàn tất</option>
+                            <option value="In progress">Đang xử lý</option>
+                            <option value="Need process">Cần xử lý</option>
+                        </select>
                     </div>
                 </div>
-                <div id="tagRanks" class="analysis-grid"></div>
-            </div>
-        </section>
-    </main>
+                <div class="table-wrapper">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Mã BG</th>
+                                <th>Tên dự án</th>
+                                <th>Khách hàng</th>
+                                <th>Tags</th>
+                                <th>Trạng thái</th>
+                                <th class="text-right">BG Untaxed</th>
+                                <th class="text-right">Chi phí</th>
+                                <th class="text-right">Lợi nhuận</th>
+                                <th class="text-right">GP%</th>
+                            </tr>
+                        </thead>
+                        <tbody id="projectsTable"></tbody>
+                    </table>
+                </div>
+                <div class="table-footer">
+                    <span id="tableInfo">Hiển thị 0 dự án</span>
+                </div>
+            </section>
+        </main>
 
-    <script type="module" src="/app.js"></script>
+        <!-- Footer -->
+        <footer class="footer">
+            <p>
+                <i class="fas fa-clock"></i>
+                Cập nhật lần cuối: <span id="lastUpdated">-</span>
+            </p>
+        </footer>
+    </div>
+
+    <script src="app.js"></script>
 </body>
-
 </html>

@@ -42,7 +42,7 @@ class OdooAPI:
             allowed_methods=["GET", "POST"],
             raise_on_status=False,
         )
-        adapter = HTTPAdapter(pool_connections=10, pool_maxsize=20, max_retries=retry)
+        adapter = HTTPAdapter(pool_connections=30, pool_maxsize=30, max_retries=retry)
 
         self.session = requests.Session()
         self.session.mount("http://", adapter)
