@@ -129,7 +129,12 @@ class DashboardService:
                     for project in projects
                 ]
                 for future in as_completed(futures):
-                    rows.append(future.result())
+                    try:
+                        row = future.result()
+                        rows.append(row)
+                    except Exception as e:
+                        logger.error(f"Failed to build dashboard row: {e}")
+                        # Skip failed project, continue with others
                     completed += 1
                     if completed % 50 == 0 or completed == total:
                         logger.info(f"Progress: {completed}/{total} projects")

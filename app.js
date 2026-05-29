@@ -2,6 +2,25 @@
 const API_BASE = '';
 const DEFAULT_DATE_FROM = '2026-01-01';
 
+// GP Health Thresholds
+const GP_HEALTH_HIGH = 40;
+const GP_HEALTH_MEDIUM = 15;
+
+// Shared State Label Map
+const STATE_LABELS = {
+    'Done': 'Hoàn tất',
+    'In progress': 'Đang xử lý',
+    'Need process': 'Cần xử lý',
+    'ATTENTION!': 'Đã đặt hàng',
+    'NVL về/Chưa SX': 'NVL về/Chờ SX',
+    'Hàng về/Chờ thi công': 'Hàng về/Chờ TC',
+    'Giao hàng xong/Chờ hoàn thành checklist': 'Giao xong',
+    'Pending': 'Chờ KH',
+    'Sx xong gom đi OCP2': 'Chờ OCP2',
+    'Gom hàng OCP2 - Đợt 2': 'Chờ OCP2-2',
+    'Chờ phản hồi nội bộ': 'Chờ nội bộ',
+};
+
 // ===== State =====
 let dashboardData = null;
 let filteredProjects = [];
@@ -10,6 +29,23 @@ let revenueDoughnutChart = null;
 let isLoadingState = false;
 let currentPage = 1;
 const ITEMS_PER_PAGE = 10;
+let selectedProjects = new Set();  // Set of project_id
+let currentAbortController = null;
+
+// Sort state
+let sortColumn = null;
+let sortDirection = 'asc';
+
+// Sortable columns config
+const SORTABLE_COLUMNS = [
+    { key: 'sale_order_name', label: 'Đơn hàng' },
+    { key: 'project_name', label: 'Dự án' },
+    { key: 'customer', label: 'Khách hàng' },
+    { key: 'bg_untaxed', label: 'Doanh thu' },
+    { key: 'native_expected_cost', label: 'Chi phí' },
+    { key: 'gp_amount', label: 'GP' },
+    { key: 'gp_percent', label: 'GP%' },
+];
 
 // ===== Utility Functions =====
 function escapeHTML(str) {
@@ -23,17 +59,21 @@ function escapeHTML(str) {
 }
 
 function formatVND(amount) {
+    if (amount === null || amount === undefined || isNaN(amount)) return '0 ₫';
     if (amount >= 1e9) {
         return (amount / 1e9).toFixed(1) + ' tỷ';
     }
     if (amount >= 1e6) {
         return (amount / 1e6).toFixed(1) + ' tr';
     }
-    return new Intl.NumberFormat('vi-VN').format(amount) + ' ₫';
+    if (amount >= 1e3) {
+        return (amount / 1e3).toFixed(1) + ' k';
+    }
+    return amount.toFixed(0) + ' ₫';
 }
 
-// Full VND formatting for table rows
 function formatFullVND(amount) {
+    if (amount === null || amount === undefined || isNaN(amount)) return '0 ₫';
     return new Intl.NumberFormat('vi-VN').format(amount) + ' ₫';
 }
 
@@ -54,16 +94,70 @@ function formatDateTime(dateStr) {
     return date.toLocaleString('vi-VN');
 }
 
+function debounce(fn, delay) {
+    let timer;
+    return function(...args) {
+        clearTimeout(timer);
+        timer = setTimeout(() => fn.apply(this, args), delay);
+    };
+}
+
 // ===== API =====
 async function fetchDashboard(dateFrom, refresh = false) {
+    // Cancel previous request if still in flight
+    if (currentAbortController) {
+        currentAbortController.abort();
+    }
+    const controller = new AbortController();
+    currentAbortController = controller;
+    const { signal } = controller;
+
+    const timeoutId = setTimeout(() => {
+        controller.abort();
+    }, 60000);
+
     const params = new URLSearchParams({ date_from: dateFrom });
     if (refresh) params.set('refresh', '1');
     
-    const response = await fetch(`${API_BASE}/api/projects-dashboard?${params}`);
-    if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    try {
+        const response = await fetch(`${API_BASE}/api/projects-dashboard?${params}`, { signal });
+        clearTimeout(timeoutId);
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        return response.json();
+    } catch (err) {
+        clearTimeout(timeoutId);
+        if (err.name === 'AbortError') {
+            throw new Error('Yêu cầu bị hủy hoặc hết thời gian chờ (60s)');
+        }
+        throw err;
     }
-    return response.json();
+}
+
+// ===== Loading Overlay =====
+function showLoadingOverlay() {
+    let overlay = document.getElementById('refreshOverlay');
+    if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = 'refreshOverlay';
+        overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(255,255,255,0.75);display:flex;align-items:center;justify-content:center;z-index:9999;backdrop-filter:blur(2px);';
+        overlay.innerHTML = '<div style="text-align:center;"><div style="width:48px;height:48px;border:4px solid #107850;border-top-color:transparent;border-radius:50%;animation:spin 0.8s linear infinite;margin:0 auto 12px;"></div><p style="font-family:var(--font-heading);font-weight:600;color:#0c2317;">Đang tải dữ liệu...</p></div>';
+        // Add keyframe animation
+        const styleEl = document.createElement('style');
+        styleEl.textContent = '@keyframes spin{to{transform:rotate(360deg)}}';
+        document.head.appendChild(styleEl);
+        document.body.appendChild(overlay);
+    } else {
+        overlay.style.display = 'flex';
+    }
+}
+
+function hideLoadingOverlay() {
+    const overlay = document.getElementById('refreshOverlay');
+    if (overlay) {
+        overlay.style.display = 'none';
+    }
 }
 
 // ===== Render Functions =====
@@ -259,6 +353,9 @@ function renderGPChart(tagGPRanks) {
         { border: '#6b7f73', start: 'rgba(107, 127, 115, 0.4)', end: 'rgba(107, 127, 115, 0.02)' }, // Clay
         { border: '#2e7d32', start: 'rgba(46, 125, 50, 0.4)', end: 'rgba(46, 125, 50, 0.02)' }    // Pine
     ];
+
+    // Pre-create gradients after chart is created (cached per dataset)
+    const cachedGradients = {};
     
     const finalDatasets = tags.map((tag, index) => {
         const ranks = tagGPRanks[tag] || [];
@@ -271,11 +368,14 @@ function renderGPChart(tagGPRanks) {
             data: sortedRanges.map(range => rankMap[range] || 0),
             backgroundColor: function(context) {
                 const chart = context.chart;
-                const {ctx, chartArea} = chart;
-                if (!chartArea) return null;
-                const gradient = ctx.createLinearGradient(0, chartArea.bottom, 0, chartArea.top);
+                const {ctx: chartCtx, chartArea} = chart;
+                if (!chartArea) return themeColor.start;
+                const cacheKey = `${index}-${chartArea.bottom}-${chartArea.top}`;
+                if (cachedGradients[cacheKey]) return cachedGradients[cacheKey];
+                const gradient = chartCtx.createLinearGradient(0, chartArea.bottom, 0, chartArea.top);
                 gradient.addColorStop(0, themeColor.end);
                 gradient.addColorStop(1, themeColor.start);
+                cachedGradients[cacheKey] = gradient;
                 return gradient;
             },
             borderColor: themeColor.border,
@@ -468,15 +568,159 @@ function updateMenuIndicator() {
     indicator.style.transform = `translate3d(0, ${offsetTop}px, 0)`;
 }
 
+// ===== Table Sorting =====
+function getSortValue(project, columnKey) {
+    const val = project[columnKey];
+    if (val === null || val === undefined) return '';
+    if (typeof val === 'number') return val;
+    return String(val).toLowerCase();
+}
+
+function applySorting(projects) {
+    if (!sortColumn) return projects;
+    const sorted = [...projects];
+    sorted.sort((a, b) => {
+        const aVal = getSortValue(a, sortColumn);
+        const bVal = getSortValue(b, sortColumn);
+        let cmp = 0;
+        if (typeof aVal === 'number' && typeof bVal === 'number') {
+            cmp = aVal - bVal;
+        } else {
+            cmp = String(aVal).localeCompare(String(bVal), 'vi');
+        }
+        return sortDirection === 'asc' ? cmp : -cmp;
+    });
+    return sorted;
+}
+
+function toggleSort(columnKey) {
+    if (sortColumn === columnKey) {
+        sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+    } else {
+        sortColumn = columnKey;
+        sortDirection = 'asc';
+    }
+    renderProjectsTable(filteredProjects);
+}
+
+function updateSortIndicators() {
+    document.querySelectorAll('th[data-sort]').forEach(th => {
+        const key = th.getAttribute('data-sort');
+        th.classList.remove('sort-asc', 'sort-desc');
+        if (key === sortColumn) {
+            th.classList.add(sortDirection === 'asc' ? 'sort-asc' : 'sort-desc');
+        }
+    });
+}
+
+// ===== Export CSV =====
+function exportCSV() {
+    if (!filteredProjects || filteredProjects.length === 0) return;
+    
+    const headers = ['Đơn hàng', 'Dự án', 'Khách hàng', 'Tags', 'Trạng thái', 'Doanh thu', 'Chi phí', 'GP', 'GP%'];
+    const rows = filteredProjects.map(p => [
+        p.sale_order_name || '',
+        p.project_name || '',
+        p.customer || '',
+        (p.tags || []).join('; '),
+        STATE_LABELS[p.order_state] || p.order_state || '',
+        p.bg_untaxed,
+        p.native_expected_cost,
+        p.gp_amount,
+        p.gp_percent !== null && p.gp_percent !== undefined ? p.gp_percent.toFixed(1) + '%' : '',
+    ]);
+    
+    const csvContent = [headers, ...rows]
+        .map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))
+        .join('\r\n');
+    
+    // BOM for Excel Vietnamese support
+    const BOM = '\uFEFF';
+    const blob = new Blob([BOM + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `du-an-roi-${new Date().toISOString().slice(0,10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
+function renderExportButton() {
+    const tableInfo = document.getElementById('tableInfo');
+    if (!tableInfo) return;
+    let exportBtn = document.getElementById('exportCsvBtn');
+    if (!exportBtn) {
+        exportBtn = document.createElement('button');
+        exportBtn.id = 'exportCsvBtn';
+        exportBtn.textContent = '📥 Xuất CSV';
+        exportBtn.className = 'export-csv-btn';
+        exportBtn.style.cssText = 'margin-left:12px;padding:4px 12px;border:1px solid var(--color-emerald, #107850);background:transparent;color:var(--color-emerald, #107850);border-radius:6px;cursor:pointer;font-size:0.8rem;font-weight:600;';
+        exportBtn.addEventListener('click', exportCSV);
+        tableInfo.parentElement.insertBefore(exportBtn, tableInfo.nextSibling);
+    }
+}
+
+// ===== Filter Indicators =====
+function updateFilterIndicators() {
+    const searchTerm = document.getElementById('searchInput').value.trim();
+    const tagFilter = document.getElementById('tagFilter').value;
+    const stateFilter = document.getElementById('stateFilter').value;
+    const hasActiveFilters = searchTerm || tagFilter || stateFilter;
+    
+    let clearBtn = document.getElementById('clearFiltersBtn');
+    if (!clearBtn) {
+        clearBtn = document.createElement('button');
+        clearBtn.id = 'clearFiltersBtn';
+        clearBtn.textContent = '✕ Xóa bộ lọc';
+        clearBtn.style.cssText = 'padding:4px 10px;border:1px solid #e74c3c;background:transparent;color:#e74c3c;border-radius:6px;cursor:pointer;font-size:0.78rem;font-weight:600;margin-left:8px;display:none;';
+        clearBtn.addEventListener('click', clearFilters);
+        // Append near the filter controls
+        const filterContainer = document.getElementById('searchInput');
+        if (filterContainer && filterContainer.parentElement) {
+            filterContainer.parentElement.appendChild(clearBtn);
+        }
+    }
+    clearBtn.style.display = hasActiveFilters ? 'inline-block' : 'none';
+}
+
+function clearFilters() {
+    document.getElementById('searchInput').value = '';
+    document.getElementById('tagFilter').value = '';
+    document.getElementById('stateFilter').value = '';
+    applyFilters();
+}
+
 function renderProjectsTable(projects) {
     const tbody = document.getElementById('projectsTable');
     tbody.innerHTML = '';
     
+    // Apply sorting
+    const sortedProjects = applySorting(projects);
+    
+    // Empty state
+    if (sortedProjects.length === 0) {
+        const emptyTr = document.createElement('tr');
+        emptyTr.innerHTML = `
+            <td colspan="10" style="text-align:center;padding:3rem 1rem;color:var(--color-text-secondary);">
+                <div style="font-size:2.5rem;margin-bottom:0.5rem;">📭</div>
+                <div style="font-weight:600;font-size:1rem;margin-bottom:0.3rem;">Không tìm thấy dự án nào</div>
+                <div style="font-size:0.85rem;opacity:0.7;">Thử thay đổi bộ lọc hoặc từ khóa tìm kiếm</div>
+            </td>
+        `;
+        tbody.appendChild(emptyTr);
+        document.getElementById('tableInfo').textContent = 'Hiển thị 0-0 / 0 dự án';
+        renderPagination(0);
+        updateSortIndicators();
+        return;
+    }
+    
     // Pagination
-    const totalPages = Math.max(1, Math.ceil(projects.length / ITEMS_PER_PAGE));
+    const totalPages = Math.max(1, Math.ceil(sortedProjects.length / ITEMS_PER_PAGE));
     if (currentPage > totalPages) currentPage = totalPages;
     const startIdx = (currentPage - 1) * ITEMS_PER_PAGE;
-    const pageProjects = projects.slice(startIdx, startIdx + ITEMS_PER_PAGE);
+    const pageProjects = sortedProjects.slice(startIdx, startIdx + ITEMS_PER_PAGE);
     
     const fragment = document.createDocumentFragment();
     
@@ -484,27 +728,16 @@ function renderProjectsTable(projects) {
         const gpClass = p.gp_percent !== null && p.gp_percent >= 0 ? 'gp-positive' : 'gp-negative';
         const stateClass = p.order_state === 'Done' ? 'done' : 
                           p.order_state === 'In progress' ? 'progress' : 'pending';
-        const stateLabel = {
-            'Done': 'Hoàn tất',
-            'In progress': 'Đang xử lý',
-            'Need process': 'Cần xử lý',
-            'ATTENTION!': 'Đã đặt hàng',
-            'NVL về/Chưa SX': 'NVL về/Chờ SX',
-            'Hàng về/Chờ thi công': 'Hàng về/Chờ TC',
-            'Giao hàng xong/Chờ hoàn thành checklist': 'Giao xong',
-            'Pending': 'Chờ KH',
-            'Sx xong gom đi OCP2': 'Chờ OCP2',
-            'Gom hàng OCP2 - Đợt 2': 'Chờ OCP2-2',
-        }[p.order_state] || escapeHTML(p.order_state) || '-';
+        const stateLabel = STATE_LABELS[p.order_state] || escapeHTML(p.order_state) || '-';
         
         let healthBadgeHTML = '';
         if (p.gp_percent === null || p.gp_percent === undefined) {
             healthBadgeHTML = '<span style="color: var(--color-text-secondary); opacity: 0.5;">-</span>';
         } else {
             let healthClass = 'health-coral';
-            if (p.gp_percent > 40) {
+            if (p.gp_percent > GP_HEALTH_HIGH) {
                 healthClass = 'health-green';
-            } else if (p.gp_percent >= 15) {
+            } else if (p.gp_percent >= GP_HEALTH_MEDIUM) {
                 healthClass = 'health-amber';
             }
             healthBadgeHTML = `
@@ -516,7 +749,9 @@ function renderProjectsTable(projects) {
         }
         
         const tr = document.createElement('tr');
+        const isSelected = selectedProjects.has(p.project_id);
         tr.innerHTML = `
+            <td style="text-align: center;"><input type="checkbox" class="project-checkbox" data-project-id="${p.project_id}" ${isSelected ? 'checked' : ''}></td>
             <td><strong style="color: var(--color-emerald); font-family: var(--font-heading); font-size: 0.88rem;">${escapeHTML(p.sale_order_name) || '-'}</strong></td>
             <td><span style="font-weight: 600; color: var(--color-text-primary);">${escapeHTML(p.project_name) || '-'}</span></td>
             <td style="color: var(--color-text-secondary); font-weight: 500;">${escapeHTML(p.customer) || '-'}</td>
@@ -527,15 +762,111 @@ function renderProjectsTable(projects) {
             <td class="text-right ${gpClass}" style="font-family: var(--font-heading); font-weight: 700;">${formatFullVND(p.gp_amount)}</td>
             <td class="text-right" style="font-family: var(--font-heading); font-size: 0.825rem; vertical-align: middle;">${healthBadgeHTML}</td>
         `;
+        if (isSelected) tr.classList.add('selected-row');
         fragment.appendChild(tr);
     });
     
     tbody.appendChild(fragment);
     
-    const start = projects.length > 0 ? startIdx + 1 : 0;
-    const end = Math.min(startIdx + ITEMS_PER_PAGE, projects.length);
-    document.getElementById('tableInfo').textContent = `Hiển thị ${start}-${end} / ${projects.length} dự án`;
-    renderPagination(projects.length);
+    const start = sortedProjects.length > 0 ? startIdx + 1 : 0;
+    const end = Math.min(startIdx + ITEMS_PER_PAGE, sortedProjects.length);
+    document.getElementById('tableInfo').textContent = `Hiển thị ${start}-${end} / ${sortedProjects.length} dự án`;
+    renderPagination(sortedProjects.length);
+    renderExportButton();
+    updateSortIndicators();
+    attachCheckboxListeners();
+}
+
+function attachCheckboxListeners() {
+    // Individual checkboxes
+    document.querySelectorAll('.project-checkbox').forEach(cb => {
+        cb.addEventListener('change', (e) => {
+            const projectId = parseInt(e.target.dataset.projectId);
+            const tr = e.target.closest('tr');
+            if (e.target.checked) {
+                selectedProjects.add(projectId);
+                tr.classList.add('selected-row');
+            } else {
+                selectedProjects.delete(projectId);
+                tr.classList.remove('selected-row');
+            }
+            updateMultiSelectPanel();
+            updateSelectAllState();
+        });
+    });
+    // Select all
+    const selectAll = document.getElementById('selectAll');
+    if (selectAll) {
+        selectAll.addEventListener('change', (e) => {
+            const startIdx = (currentPage - 1) * ITEMS_PER_PAGE;
+            const endIdx = startIdx + ITEMS_PER_PAGE;
+            const sortedProjects = applySorting(filteredProjects);
+            const pageProjects = sortedProjects.slice(startIdx, endIdx);
+            
+            if (e.target.checked) {
+                pageProjects.forEach(p => selectedProjects.add(p.project_id));
+            } else {
+                pageProjects.forEach(p => selectedProjects.delete(p.project_id));
+            }
+            // Update UI
+            document.querySelectorAll('.project-checkbox').forEach(cb => {
+                const pid = parseInt(cb.dataset.projectId);
+                cb.checked = selectedProjects.has(pid);
+                cb.closest('tr').classList.toggle('selected-row', selectedProjects.has(pid));
+            });
+            updateMultiSelectPanel();
+        });
+    }
+    updateSelectAllState();
+}
+
+function updateSelectAllState() {
+    const selectAll = document.getElementById('selectAll');
+    if (!selectAll) return;
+    const checkboxes = document.querySelectorAll('.project-checkbox');
+    const checkedCount = document.querySelectorAll('.project-checkbox:checked').length;
+    selectAll.checked = checkboxes.length > 0 && checkedCount === checkboxes.length;
+    selectAll.indeterminate = checkedCount > 0 && checkedCount < checkboxes.length;
+}
+
+function updateMultiSelectPanel() {
+    const panel = document.getElementById('multiSelectPanel');
+    if (!panel) return;
+    
+    if (selectedProjects.size === 0) {
+        panel.style.display = 'none';
+        return;
+    }
+    
+    panel.style.display = 'block';
+    
+    // Find selected project data from dashboardData
+    const allProjects = dashboardData?.projects || [];
+    const selected = allProjects.filter(p => selectedProjects.has(p.project_id));
+    
+    let totalBG = 0;
+    let totalCost = 0;
+    let totalGP = 0;
+    let weightedGPSum = 0;
+    let weightedGPCount = 0;
+    
+    selected.forEach(p => {
+        totalBG += p.bg_untaxed || 0;
+        totalCost += p.native_expected_cost || 0;
+        totalGP += p.gp_amount || 0;
+        if (p.gp_percent !== null && p.gp_percent !== undefined && (p.bg_untaxed || 0) > 0) {
+            weightedGPSum += p.gp_percent * p.bg_untaxed;
+            weightedGPCount += p.bg_untaxed;
+        }
+    });
+    
+    const weightedGP = weightedGPCount > 0 ? (weightedGPSum / weightedGPCount).toFixed(1) : '-';
+    
+    document.getElementById('selectedCount').textContent = selectedProjects.size;
+    document.getElementById('selectedTotalBG').textContent = formatFullVND(totalBG);
+    document.getElementById('selectedTotalCost').textContent = formatFullVND(totalCost);
+    document.getElementById('selectedTotalGP').textContent = formatFullVND(totalGP);
+    document.getElementById('selectedAvgGP').textContent = weightedGP !== '-' ? weightedGP + '%' : '-';
 }
 
 function renderPagination(totalItems) {
@@ -550,7 +881,7 @@ function renderPagination(totalItems) {
     prevBtn.className = 'page-btn' + (currentPage === 1 ? ' disabled' : '');
     prevBtn.innerHTML = '&laquo;';
     prevBtn.disabled = currentPage === 1;
-    prevBtn.addEventListener('click', () => { if (currentPage > 1) { currentPage--; renderProjectsTable(filteredProjects); } });
+    prevBtn.addEventListener('click', () => { if (currentPage > 1) { currentPage--; renderProjectsTable(filteredProjects); scrollToTableTop(); } });
     container.appendChild(prevBtn);
     
     // Page numbers
@@ -563,7 +894,7 @@ function renderPagination(totalItems) {
         const firstBtn = document.createElement('button');
         firstBtn.className = 'page-btn';
         firstBtn.textContent = '1';
-        firstBtn.addEventListener('click', () => { currentPage = 1; renderProjectsTable(filteredProjects); });
+        firstBtn.addEventListener('click', () => { currentPage = 1; renderProjectsTable(filteredProjects); scrollToTableTop(); });
         container.appendChild(firstBtn);
         if (startPage > 2) {
             const dots = document.createElement('span');
@@ -577,7 +908,7 @@ function renderPagination(totalItems) {
         const btn = document.createElement('button');
         btn.className = 'page-btn' + (i === currentPage ? ' active' : '');
         btn.textContent = i;
-        btn.addEventListener('click', () => { currentPage = i; renderProjectsTable(filteredProjects); });
+        btn.addEventListener('click', () => { currentPage = i; renderProjectsTable(filteredProjects); scrollToTableTop(); });
         container.appendChild(btn);
     }
     
@@ -591,7 +922,7 @@ function renderPagination(totalItems) {
         const lastBtn = document.createElement('button');
         lastBtn.className = 'page-btn';
         lastBtn.textContent = totalPages;
-        lastBtn.addEventListener('click', () => { currentPage = totalPages; renderProjectsTable(filteredProjects); });
+        lastBtn.addEventListener('click', () => { currentPage = totalPages; renderProjectsTable(filteredProjects); scrollToTableTop(); });
         container.appendChild(lastBtn);
     }
     
@@ -600,8 +931,15 @@ function renderPagination(totalItems) {
     nextBtn.className = 'page-btn' + (currentPage === totalPages ? ' disabled' : '');
     nextBtn.innerHTML = '&raquo;';
     nextBtn.disabled = currentPage === totalPages;
-    nextBtn.addEventListener('click', () => { if (currentPage < totalPages) { currentPage++; renderProjectsTable(filteredProjects); } });
+    nextBtn.addEventListener('click', () => { if (currentPage < totalPages) { currentPage++; renderProjectsTable(filteredProjects); scrollToTableTop(); } });
     container.appendChild(nextBtn);
+}
+
+function scrollToTableTop() {
+    const table = document.getElementById('projectsTable');
+    if (table) {
+        table.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
 }
 
 function populateFilters(projects) {
@@ -619,32 +957,18 @@ function populateFilters(projects) {
         tagFilter.appendChild(opt);
     });
     
-    // Populate state filter
+    // Populate state filter using shared STATE_LABELS
     const stateFilter = document.getElementById('stateFilter');
     const allStates = new Set();
     projects.forEach(p => {
         if (p.order_state) allStates.add(p.order_state);
     });
     
-    const stateLabels = {
-        'Done': 'Hoàn tất',
-        'In progress': 'Đang xử lý',
-        'Need process': 'Cần xử lý',
-        'ATTENTION!': 'Đã đặt hàng',
-        'NVL về/Chưa SX': 'NVL về/Chờ SX',
-        'Hàng về/Chờ thi công': 'Hàng về/Chờ TC',
-        'Giao hàng xong/Chờ hoàn thành checklist': 'Giao xong/Chờ checklist',
-        'Pending': 'Chờ KH',
-        'Chờ phản hồi nội bộ': 'Chờ nội bộ',
-        'Sx xong gom đi OCP2': 'Chờ OCP2',
-        'Gom hàng OCP2 - Đợt 2': 'Chờ OCP2-2',
-    };
-    
     stateFilter.innerHTML = '<option value="">Tất cả trạng thái</option>';
     Array.from(allStates).sort().forEach(state => {
         const opt = document.createElement('option');
         opt.value = state;
-        opt.textContent = stateLabels[state] || state;
+        opt.textContent = STATE_LABELS[state] || state;
         stateFilter.appendChild(opt);
     });
 }
@@ -679,6 +1003,7 @@ function applyFilters() {
     
     currentPage = 1;
     renderProjectsTable(filteredProjects);
+    updateFilterIndicators();
 }
 
 // ===== SPA Router =====
@@ -716,10 +1041,18 @@ function handleRouting() {
         }
     });
     
-    // Ensure Chart.js renders correctly with correct width when entering the ranks view
+    // Only render charts if not already rendered (avoid re-creating on every route change)
     if (hash === '#/ranks' && dashboardData) {
-        renderGPChart(dashboardData.tag_gp_ranks);
-        renderRevenueDoughnut(dashboardData.tag_buckets);
+        if (!gpChart) {
+            renderGPChart(dashboardData.tag_gp_ranks);
+        } else {
+            gpChart.resize();
+        }
+        if (!revenueDoughnutChart) {
+            renderRevenueDoughnut(dashboardData.tag_buckets);
+        } else {
+            revenueDoughnutChart.resize();
+        }
         renderTagLeaderboard(dashboardData.tag_buckets);
     }
     
@@ -741,9 +1074,16 @@ async function loadDashboard(refresh = false) {
     const errorEl = document.getElementById('errorState');
     const mainEl = document.getElementById('mainContent');
     
-    loadingEl.style.display = 'flex';
-    errorEl.style.display = 'none';
-    mainEl.style.display = 'none';
+    // Use overlay for refresh, full loading state only for initial load
+    if (dashboardData) {
+        // Refresh mode: show overlay, keep content visible
+        showLoadingOverlay();
+    } else {
+        // Initial load: show loading state, hide main
+        loadingEl.style.display = 'flex';
+        errorEl.style.display = 'none';
+        mainEl.style.display = 'none';
+    }
     
     try {
         const dateFrom = dateFromInput ? dateFromInput.value : '';
@@ -759,16 +1099,21 @@ async function loadDashboard(refresh = false) {
         
         document.getElementById('lastUpdated').textContent = formatDateTime(dashboardData.fetched_at);
         
-        loadingEl.style.display = 'none';
-        mainEl.style.display = 'block';
+        if (loadingEl) loadingEl.style.display = 'none';
+        if (mainEl) mainEl.style.display = 'block';
+        hideLoadingOverlay();
         
         // Execute routing logic once data is loaded to show the correct section immediately
         handleRouting();
     } catch (err) {
         console.error('Load error:', err);
-        loadingEl.style.display = 'none';
-        errorEl.style.display = 'flex';
-        document.getElementById('errorMessage').textContent = err.message;
+        hideLoadingOverlay();
+        if (!dashboardData) {
+            // Only show error state if we don't have any data yet
+            loadingEl.style.display = 'none';
+            errorEl.style.display = 'flex';
+            document.getElementById('errorMessage').textContent = err.message;
+        }
     } finally {
         isLoadingState = false;
         if (refreshBtn) refreshBtn.disabled = false;
@@ -786,15 +1131,45 @@ document.addEventListener('DOMContentLoaded', () => {
     // Resize listener for sidebar sliding indicator
     addEventListener('resize', updateMenuIndicator);
     
+    // Refresh button (JS handler, not inline)
     document.getElementById('refreshBtn').addEventListener('click', () => {
         loadDashboard(true);
     });
+    
+    // Retry button handler
+    const retryBtn = document.getElementById('retryBtn');
+    if (retryBtn) {
+        retryBtn.addEventListener('click', () => {
+            loadDashboard(true);
+        });
+    }
     
     document.getElementById('dateFrom').addEventListener('change', () => {
         loadDashboard(true);
     });
     
-    document.getElementById('searchInput').addEventListener('input', applyFilters);
+    // Search with debounce (300ms)
+    const debouncedApplyFilters = debounce(applyFilters, 300);
+    document.getElementById('searchInput').addEventListener('input', debouncedApplyFilters);
     document.getElementById('tagFilter').addEventListener('change', applyFilters);
     document.getElementById('stateFilter').addEventListener('change', applyFilters);
+    
+    // Table header sort click handlers
+    document.querySelectorAll('th.sortable').forEach(th => {
+        th.addEventListener('click', () => {
+            const column = th.dataset.sort;
+            toggleSort(column);
+        });
+    });
+    
+    // Multi-select: Clear selection button
+    document.getElementById('clearSelection')?.addEventListener('click', () => {
+        selectedProjects.clear();
+        document.querySelectorAll('.project-checkbox').forEach(cb => {
+            cb.checked = false;
+            cb.closest('tr').classList.remove('selected-row');
+        });
+        document.getElementById('selectAll').checked = false;
+        updateMultiSelectPanel();
+    });
 });
