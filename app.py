@@ -34,15 +34,31 @@ def create_app() -> Flask:
 
     @app.get("/")
     def index():
-        return send_from_directory(BASE_DIR, "index.html")
+        response = send_from_directory(BASE_DIR, "index.html")
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        return response
 
     @app.get("/styles.css")
     def styles():
-        return send_from_directory(BASE_DIR, "styles.css")
+        response = send_from_directory(BASE_DIR, "styles.css")
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        return response
 
     @app.get("/app.js")
     def javascript():
-        return send_from_directory(BASE_DIR, "app.js")
+        response = send_from_directory(BASE_DIR, "app.js")
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        return response
+
+    @app.get("/assets/<path:filename>")
+    def serve_assets(filename):
+        return send_from_directory(BASE_DIR / "assets", filename)
 
     @app.get("/favicon.ico")
     def favicon():

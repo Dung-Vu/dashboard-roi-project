@@ -6,8 +6,20 @@ const DEFAULT_DATE_FROM = '2026-01-01';
 let dashboardData = null;
 let filteredProjects = [];
 let gpChart = null;
+let revenueDoughnutChart = null;
+let isLoadingState = false;
 
 // ===== Utility Functions =====
+function escapeHTML(str) {
+    if (str === null || str === undefined) return '';
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
+
 function formatVND(amount) {
     if (amount >= 1e9) {
         return (amount / 1e9).toFixed(1) + ' tỷ';
@@ -18,13 +30,14 @@ function formatVND(amount) {
     return new Intl.NumberFormat('vi-VN').format(amount) + ' ₫';
 }
 
+// Full VND formatting for table rows
 function formatFullVND(amount) {
     return new Intl.NumberFormat('vi-VN').format(amount) + ' ₫';
 }
 
 function formatPercent(value) {
-    if (value === null || value === undefined) return '-';
-    return value.toFixed(1) + '%';
+    if (value === null || value === undefined || isNaN(Number(value))) return '-';
+    return Number(value).toFixed(1) + '%';
 }
 
 function formatDate(dateStr) {
@@ -52,6 +65,57 @@ async function fetchDashboard(dateFrom, refresh = false) {
 }
 
 // ===== Render Functions =====
+function renderKPISparklines(projects) {
+    document.querySelectorAll('.kpi-card').forEach(card => {
+        const existing = card.querySelector('.kpi-sparkline');
+        if (existing) existing.remove();
+    });
+
+    if (!Array.isArray(projects)) return;
+    const validProjects = projects
+        .filter(p => p && p.gp_percent !== null && p.gp_percent !== undefined)
+        .slice(-10);
+    if (validProjects.length < 2) return;
+    
+    const values = validProjects.map(p => p.gp_percent);
+    const minVal = Math.min(...values);
+    const maxVal = Math.max(...values);
+    const valRange = maxVal - minVal || 1;
+    
+    const width = 240, height = 45, padding = 4;
+    const points = values.map((val, idx) => ({
+        x: (idx / (values.length - 1)) * width,
+        y: height - padding - ((val - minVal) / valRange) * (height - 2 * padding)
+    }));
+    
+    let pathD = `M ${points[0].x} ${points[0].y}`;
+    for (let i = 0; i < points.length - 1; i++) {
+        const p0 = points[i], p1 = points[i + 1];
+        const cpX = p0.x + (p1.x - p0.x) / 2;
+        pathD += ` C ${cpX} ${p0.y}, ${cpX} ${p1.y}, ${p1.x} ${p1.y}`;
+    }
+    const fillD = `${pathD} L ${points[points.length - 1].x} ${height} L ${points[0].x} ${height} Z`;
+    
+    document.querySelectorAll('.kpi-card').forEach((card, cardIdx) => {
+        const gradId = `sparklineGrad-${cardIdx}-${Math.random().toString(36).substr(2, 9)}`;
+        const svgHTML = `
+            <svg class="kpi-sparkline" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none">
+                <defs>
+                    <linearGradient id="${gradId}" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stop-color="#107850" stop-opacity="0.28" />
+                        <stop offset="100%" stop-color="#557361" stop-opacity="0.02" />
+                    </linearGradient>
+                </defs>
+                <path d="${fillD}" fill="url(#${gradId})" />
+                <path d="${pathD}" fill="none" stroke="#107850" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+        `;
+        card.style.position = 'relative';
+        card.style.overflow = 'hidden';
+        card.insertAdjacentHTML('beforeend', svgHTML);
+    });
+}
+
 function renderKPIs(summary) {
     document.getElementById('totalProjects').textContent = summary.total_projects;
     document.getElementById('validProjects').textContent = 
@@ -59,8 +123,16 @@ function renderKPIs(summary) {
     document.getElementById('totalBG').textContent = formatVND(summary.total_bg_untaxed);
     document.getElementById('totalCost').textContent = formatVND(summary.total_native_expected_cost);
     document.getElementById('totalGP').textContent = formatVND(summary.total_gp_amount);
-    document.getElementById('weightedGP').textContent = 
-        `${formatPercent(summary.weighted_gp_percent)} weighted`;
+    
+    const weightedGP = document.getElementById('weightedGP');
+    weightedGP.textContent = `${formatPercent(summary.weighted_gp_percent)} weighted`;
+    if (summary.weighted_gp_percent === null || summary.weighted_gp_percent === undefined) {
+        weightedGP.className = 'kpi-subtitle';
+    } else if (summary.weighted_gp_percent >= 0) {
+        weightedGP.className = 'kpi-subtitle gp-positive';
+    } else {
+        weightedGP.className = 'kpi-subtitle gp-negative';
+    }
 }
 
 function renderTagAnalysis(tagBuckets, tagGPRanks) {
@@ -68,58 +140,86 @@ function renderTagAnalysis(tagBuckets, tagGPRanks) {
     container.innerHTML = '';
     
     const tags = Object.keys(tagBuckets);
+    
+    // Calculate grand total revenue across all tags for contribution percentages
+    let grandTotalBG = 0;
+    const tagTotals = {};
+    
+    tags.forEach(tag => {
+        const buckets = tagBuckets[tag];
+        let tagBG = 0;
+        Object.values(buckets).forEach(tier => {
+            tagBG += tier.bg_untaxed;
+        });
+        tagTotals[tag] = tagBG;
+        grandTotalBG += tagBG;
+    });
+    
+    const fragment = document.createDocumentFragment();
+    
+    // Render each tag as a premium biophilic progress bar widget
     tags.forEach(tag => {
         const buckets = tagBuckets[tag];
         const ranks = tagGPRanks[tag] || [];
+        const totalBG = tagTotals[tag];
         
-        // Calculate totals
         let totalCount = 0;
-        let totalBG = 0;
         Object.values(buckets).forEach(tier => {
             totalCount += tier.count;
-            totalBG += tier.bg_untaxed;
         });
         
+        // Calculate contribution ratio
+        const contributionPercent = grandTotalBG > 0 ? ((totalBG / grandTotalBG) * 100).toFixed(1) : 0;
+        
         const card = document.createElement('div');
-        card.className = 'tag-card';
+        card.className = 'tag-insight-item';
         card.innerHTML = `
-            <div class="tag-card-header">
-                <span class="tag-name">${tag}</span>
-                <span class="tag-total">${totalCount} dự án · ${formatVND(totalBG)}</span>
+            <div class="tag-insight-header">
+                <span class="tag-insight-title">${escapeHTML(tag)}</span>
+                <span class="tag-insight-volume">${totalCount} dự án · ${formatVND(totalBG)}</span>
             </div>
-            <div class="tier-grid">
+            
+            <!-- Custom Aura Forest Biophilic Progress Bar -->
+            <div class="progress-bar-container" title="Chiếm ${contributionPercent}% doanh thu các nhóm">
+                <div class="progress-bar-fill" style="width: ${contributionPercent}%;"></div>
+            </div>
+            
+            <div class="progress-tiers-grid">
                 ${renderTiers(buckets)}
             </div>
+            
             ${ranks.length > 0 ? `
-                <div style="margin-top: 1rem; padding-top: 0.75rem; border-top: 1px solid var(--border);">
-                    <div style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 0.5rem;">
-                        GP% phổ biến nhất
-                    </div>
+                <div class="tag-insight-footer">
+                    <div class="tag-ranks-label">GP% phổ biến nhất</div>
                     ${ranks.map(r => `
-                        <div style="display: flex; justify-content: space-between; font-size: 0.8rem; margin-bottom: 0.25rem;">
-                            <span style="color: var(--text-secondary);">#${r.rank} ${r.range}</span>
-                            <span style="color: var(--success);">${r.count} dự án</span>
+                        <div class="tag-rank-row">
+                            <span style="font-weight: 600; color: var(--color-text-secondary);">#${r.rank} ${escapeHTML(r.range)}</span>
+                            <span class="gp-positive" style="font-weight: 700;">${r.count} dự án</span>
                         </div>
                     `).join('')}
                 </div>
             ` : ''}
         `;
-        container.appendChild(card);
+        fragment.appendChild(card);
     });
+    
+    container.appendChild(fragment);
 }
 
 function renderTiers(buckets) {
     const tierOrder = ['<10tr', '10-100tr', '100-200tr', '>200tr'];
     return tierOrder.map(tierName => {
         const tier = buckets[tierName] || { count: 0, bg_untaxed: 0, weighted_gp_percent: null };
+        const gpVal = tier.weighted_gp_percent !== null ? tier.weighted_gp_percent : 0;
+        const gpClass = gpVal >= 0 ? 'gp-positive' : 'gp-negative';
+        
         return `
-            <div class="tier-item">
-                <div class="tier-label">${tierName}</div>
-                <div class="tier-value">${tier.count} dự án</div>
-                <div class="tier-gp">${formatVND(tier.bg_untaxed)}</div>
+            <div class="progress-tier-box">
+                <div class="progress-tier-name">${tierName}</div>
+                <div class="progress-tier-count">${tier.count} DA</div>
                 ${tier.weighted_gp_percent !== null 
-                    ? `<div class="tier-gp">GP: ${formatPercent(tier.weighted_gp_percent)}</div>` 
-                    : ''}
+                    ? `<div class="progress-tier-margin ${gpClass}">${formatPercent(tier.weighted_gp_percent)}</div>` 
+                    : '<div class="progress-tier-margin" style="color: var(--color-text-secondary); opacity: 0.5;">-</div>'}
             </div>
         `;
     }).join('');
@@ -132,20 +232,14 @@ function renderGPChart(tagGPRanks) {
         gpChart.destroy();
     }
     
-    const tags = Object.keys(tagGPRanks);
-    const datasets = tags.map((tag, index) => {
-        const ranks = tagGPRanks[tag] || [];
-        const colors = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6'];
-        return {
-            label: tag,
-            data: ranks.map(r => ({ x: r.range, y: r.count })),
-            backgroundColor: colors[index % colors.length] + '80',
-            borderColor: colors[index % colors.length],
-            borderWidth: 2,
-        };
-    });
+    // Query calculated text colors from DOM computed variables
+    const style = getComputedStyle(document.documentElement);
+    const textColorPrimary = style.getPropertyValue('--color-text-primary').trim() || '#0c2317';
+    const textColorSecondary = style.getPropertyValue('--color-text-secondary').trim() || '#557361';
     
-    // Collect all ranges
+    const tags = Object.keys(tagGPRanks);
+    
+    // Collect all unique ranges
     const allRanges = new Set();
     Object.values(tagGPRanks).forEach(ranks => {
         ranks.forEach(r => allRanges.add(r.range));
@@ -156,18 +250,37 @@ function renderGPChart(tagGPRanks) {
         return aNum - bNum;
     });
     
-    // Rebuild datasets with all ranges
+    // Beautiful Aura Forest green gradients
+    const colors = [
+        { border: '#107850', start: 'rgba(16, 120, 80, 0.4)', end: 'rgba(16, 120, 80, 0.02)' }, // Rich Emerald
+        { border: '#00e699', start: 'rgba(0, 230, 153, 0.4)', end: 'rgba(0, 230, 153, 0.02)' }, // Mint Glow
+        { border: '#6b7f73', start: 'rgba(107, 127, 115, 0.4)', end: 'rgba(107, 127, 115, 0.02)' }, // Clay
+        { border: '#2e7d32', start: 'rgba(46, 125, 50, 0.4)', end: 'rgba(46, 125, 50, 0.02)' }    // Pine
+    ];
+    
     const finalDatasets = tags.map((tag, index) => {
         const ranks = tagGPRanks[tag] || [];
         const rankMap = {};
         ranks.forEach(r => { rankMap[r.range] = r.count; });
-        const colors = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6'];
+        const themeColor = colors[index % colors.length];
+        
         return {
             label: tag,
             data: sortedRanges.map(range => rankMap[range] || 0),
-            backgroundColor: colors[index % colors.length] + '80',
-            borderColor: colors[index % colors.length],
-            borderWidth: 2,
+            backgroundColor: function(context) {
+                const chart = context.chart;
+                const {ctx, chartArea} = chart;
+                if (!chartArea) return null;
+                const gradient = ctx.createLinearGradient(0, chartArea.bottom, 0, chartArea.top);
+                gradient.addColorStop(0, themeColor.end);
+                gradient.addColorStop(1, themeColor.start);
+                return gradient;
+            },
+            borderColor: themeColor.border,
+            borderWidth: 1.5,
+            borderRadius: 5,
+            borderSkipped: false,
+            hoverBackgroundColor: themeColor.border
         };
     });
     
@@ -183,17 +296,50 @@ function renderGPChart(tagGPRanks) {
             plugins: {
                 legend: {
                     position: 'top',
-                    labels: { color: '#94a3b8' }
+                    labels: {
+                        color: textColorPrimary, // Dynamic Primary text
+                        font: {
+                            family: "'Outfit', sans-serif",
+                            size: 12,
+                            weight: '600'
+                        },
+                        padding: 18,
+                        usePointStyle: true,
+                        pointStyle: 'circle'
+                    }
+                },
+                tooltip: {
+                    backgroundColor: 'rgba(12, 35, 23, 0.95)',
+                    titleColor: '#f4f7f5',
+                    bodyColor: '#a7f3d0',
+                    borderColor: 'var(--color-emerald)',
+                    borderWidth: 1,
+                    padding: 10,
+                    boxPadding: 5,
+                    titleFont: {
+                        family: "'Montserrat', sans-serif",
+                        weight: '600'
+                    },
+                    bodyFont: {
+                        family: "'Outfit', sans-serif"
+                    }
                 }
             },
             scales: {
                 x: {
-                    ticks: { color: '#94a3b8' },
-                    grid: { color: '#334155' }
+                    ticks: { 
+                        color: textColorSecondary, // Dynamic Secondary text
+                        font: { family: "'Outfit', sans-serif", size: 10, weight: '600' }
+                    },
+                    grid: { color: 'rgba(16, 120, 80, 0.04)' } // Subtle emerald grid
                 },
                 y: {
-                    ticks: { color: '#94a3b8' },
-                    grid: { color: '#334155' },
+                    ticks: { 
+                        color: textColorSecondary, // Dynamic Secondary text
+                        font: { family: "'Outfit', sans-serif", size: 10, weight: '600' },
+                        stepSize: 1
+                    },
+                    grid: { color: 'rgba(16, 120, 80, 0.04)' },
                     beginAtZero: true
                 }
             }
@@ -201,9 +347,130 @@ function renderGPChart(tagGPRanks) {
     });
 }
 
+function renderRevenueDoughnut(tagBuckets) {
+    const canvas = document.getElementById('revenueDoughnutChart');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (revenueDoughnutChart) {
+        revenueDoughnutChart.destroy();
+    }
+    
+    const style = getComputedStyle(document.documentElement);
+    const textColorPrimary = style.getPropertyValue('--color-text-primary').trim() || '#0c2317';
+    
+    const tags = Object.keys(tagBuckets);
+    const tagRevenueData = tags.map(tag => {
+        let tagBG = 0;
+        Object.values(tagBuckets[tag]).forEach(tier => { tagBG += tier.bg_untaxed; });
+        return { tag, revenue: tagBG };
+    }).sort((a, b) => b.revenue - a.revenue);
+    
+    const colors = ['#107850', '#00e699', '#6b7f73', '#2e7d32', '#a3b899'];
+    
+    revenueDoughnutChart = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            labels: tagRevenueData.map(d => d.tag),
+            datasets: [{
+                data: tagRevenueData.map(d => d.revenue),
+                backgroundColor: colors.slice(0, tagRevenueData.length),
+                borderColor: '#ffffff',
+                borderWidth: 2
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    position: 'right',
+                    labels: {
+                        color: textColorPrimary,
+                        font: { family: "'Outfit', sans-serif", size: 11, weight: '600' },
+                        usePointStyle: true,
+                        pointStyle: 'circle'
+                    }
+                },
+                tooltip: {
+                    backgroundColor: 'rgba(12, 35, 23, 0.95)',
+                    callbacks: {
+                        label: function(context) {
+                            const value = context.raw;
+                            const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                            return ` ${context.label}: ${formatVND(value)} (${((value/total)*100).toFixed(1)}%)`;
+                        }
+                    }
+                }
+            },
+            cutout: '65%'
+        }
+    });
+}
+
+function renderTagLeaderboard(tagBuckets) {
+    const container = document.getElementById('tagLeaderboard');
+    if (!container) return;
+    container.innerHTML = '';
+    
+    const items = Object.keys(tagBuckets).map(tag => {
+        let totalBG = 0, totalCount = 0, weightedGPSum = 0;
+        Object.values(tagBuckets[tag]).forEach(tier => {
+            totalBG += tier.bg_untaxed;
+            totalCount += tier.count;
+            if (tier.weighted_gp_percent !== null) weightedGPSum += tier.weighted_gp_percent * tier.count;
+        });
+        return { tag, totalBG, totalCount, avgGP: totalCount > 0 ? (weightedGPSum / totalCount) : 0 };
+    }).sort((a, b) => b.avgGP - a.avgGP);
+    
+    const fragment = document.createDocumentFragment();
+    items.forEach((item, index) => {
+        const rank = index + 1;
+        const rankClass = rank === 1 ? 'rank-1' : rank === 2 ? 'rank-2' : rank === 3 ? 'rank-3' : 'rank-standard';
+        const div = document.createElement('div');
+        div.className = `leaderboard-item ${rankClass}`;
+        div.innerHTML = `
+            <div class="leaderboard-rank">${rank}</div>
+            <div class="leaderboard-info">
+                <div class="leaderboard-name">${escapeHTML(item.tag)}</div>
+                <div class="leaderboard-stats">${item.totalCount} dự án · Doanh thu: ${formatVND(item.totalBG)}</div>
+            </div>
+            <div class="leaderboard-kpi">
+                <div class="leaderboard-kpi-val ${item.avgGP >= 0 ? 'gp-positive' : 'gp-negative'}">${formatPercent(item.avgGP)}</div>
+                <div class="leaderboard-kpi-sub">Weighted GP</div>
+            </div>
+        `;
+        fragment.appendChild(div);
+    });
+    container.appendChild(fragment);
+}
+
+function updateMenuIndicator() {
+    const activeItem = document.querySelector('.sidebar-menu .menu-item.active');
+    const indicator = document.getElementById('menuIndicator');
+    if (!indicator) return;
+    
+    if (!activeItem) {
+        indicator.style.opacity = '0';
+        return;
+    }
+    
+    indicator.style.opacity = '1';
+    const menuContainer = document.querySelector('.sidebar-menu');
+    const activeRect = activeItem.getBoundingClientRect();
+    const menuRect = menuContainer.getBoundingClientRect();
+    
+    const offsetTop = activeRect.top - menuRect.top;
+    const height = activeRect.height;
+    
+    indicator.style.height = `${height}px`;
+    indicator.style.transform = `translate3d(0, ${offsetTop}px, 0)`;
+}
+
 function renderProjectsTable(projects) {
     const tbody = document.getElementById('projectsTable');
     tbody.innerHTML = '';
+    
+    const fragment = document.createDocumentFragment();
     
     projects.forEach(p => {
         const gpClass = p.gp_percent !== null && p.gp_percent >= 0 ? 'gp-positive' : 'gp-negative';
@@ -220,22 +487,42 @@ function renderProjectsTable(projects) {
             'Pending': 'Chờ KH',
             'Sx xong gom đi OCP2': 'Chờ OCP2',
             'Gom hàng OCP2 - Đợt 2': 'Chờ OCP2-2',
-        }[p.order_state] || p.order_state || '-';
+        }[p.order_state] || escapeHTML(p.order_state) || '-';
+        
+        let healthBadgeHTML = '';
+        if (p.gp_percent === null || p.gp_percent === undefined) {
+            healthBadgeHTML = '<span style="color: var(--color-text-secondary); opacity: 0.5;">-</span>';
+        } else {
+            let healthClass = 'health-coral';
+            if (p.gp_percent > 40) {
+                healthClass = 'health-green';
+            } else if (p.gp_percent >= 15) {
+                healthClass = 'health-amber';
+            }
+            healthBadgeHTML = `
+                <span class="health-orb-badge ${healthClass}">
+                    <span class="orb-dot"></span>
+                    ${formatPercent(p.gp_percent)}
+                </span>
+            `;
+        }
         
         const tr = document.createElement('tr');
         tr.innerHTML = `
-            <td><strong>${p.sale_order_name || '-'}</strong></td>
-            <td>${p.project_name || '-'}</td>
-            <td>${p.customer || '-'}</td>
-            <td>${(p.tags || []).map(t => `<span class="tag-badge">${t}</span>`).join('')}</td>
+            <td><strong style="color: var(--color-emerald); font-family: var(--font-heading); font-size: 0.88rem;">${escapeHTML(p.sale_order_name) || '-'}</strong></td>
+            <td><span style="font-weight: 600; color: var(--color-text-primary);">${escapeHTML(p.project_name) || '-'}</span></td>
+            <td style="color: var(--color-text-secondary); font-weight: 500;">${escapeHTML(p.customer) || '-'}</td>
+            <td><div style="display: flex; flex-wrap: wrap; gap: 0.25rem;">${(p.tags || []).map(t => `<span class="tag-badge">${escapeHTML(t)}</span>`).join('')}</div></td>
             <td><span class="state-badge ${stateClass}">${stateLabel}</span></td>
-            <td class="text-right">${formatFullVND(p.bg_untaxed)}</td>
-            <td class="text-right">${formatFullVND(p.native_expected_cost)}</td>
-            <td class="text-right ${gpClass}">${formatFullVND(p.gp_amount)}</td>
-            <td class="text-right ${gpClass}">${formatPercent(p.gp_percent)}</td>
+            <td class="text-right" style="font-family: var(--font-heading); font-weight: 700; color: var(--color-text-primary);">${formatFullVND(p.bg_untaxed)}</td>
+            <td class="text-right" style="font-family: var(--font-heading); font-weight: 600; color: var(--color-text-secondary);">${formatFullVND(p.native_expected_cost)}</td>
+            <td class="text-right ${gpClass}" style="font-family: var(--font-heading); font-weight: 700;">${formatFullVND(p.gp_amount)}</td>
+            <td class="text-right" style="font-family: var(--font-heading); font-size: 0.825rem; vertical-align: middle;">${healthBadgeHTML}</td>
         `;
-        tbody.appendChild(tr);
+        fragment.appendChild(tr);
     });
+    
+    tbody.appendChild(fragment);
     
     document.getElementById('tableInfo').textContent = `Hiển thị ${projects.length} dự án`;
 }
@@ -289,7 +576,7 @@ function populateFilters(projects) {
 function applyFilters() {
     if (!dashboardData) return;
     
-    const searchTerm = document.getElementById('searchInput').value.toLowerCase();
+    const searchTerm = document.getElementById('searchInput').value.trim().toLowerCase();
     const tagFilter = document.getElementById('tagFilter').value;
     const stateFilter = document.getElementById('stateFilter').value;
     
@@ -316,8 +603,62 @@ function applyFilters() {
     renderProjectsTable(filteredProjects);
 }
 
+// ===== SPA Router =====
+function handleRouting() {
+    const hash = location.hash || '#/overview';
+    
+    // Map hash to DOM section IDs
+    const routeMap = {
+        '#/overview': 'overview-route',
+        '#/tags': 'tags-route',
+        '#/projects': 'projects-route',
+        '#/ranks': 'ranks-route'
+    };
+    
+    const activeSectionId = routeMap[hash] || 'overview-route';
+    
+    // Hide all route views
+    document.querySelectorAll('.route-view').forEach(view => {
+        view.classList.remove('active');
+    });
+    
+    // Show active route view
+    const activeView = document.getElementById(activeSectionId);
+    if (activeView) {
+        activeView.classList.add('active');
+    }
+    
+    // Update active sidebar menu items
+    document.querySelectorAll('.sidebar-menu .menu-item').forEach(item => {
+        const href = item.getAttribute('href');
+        if (href === hash || (hash === '#/overview' && href === '#/overview')) {
+            item.classList.add('active');
+        } else {
+            item.classList.remove('active');
+        }
+    });
+    
+    // Ensure Chart.js renders correctly with correct width when entering the ranks view
+    if (hash === '#/ranks' && dashboardData) {
+        renderGPChart(dashboardData.tag_gp_ranks);
+        renderRevenueDoughnut(dashboardData.tag_buckets);
+        renderTagLeaderboard(dashboardData.tag_buckets);
+    }
+    
+    // Update menu indicator position vertical
+    updateMenuIndicator();
+}
+
 // ===== Main =====
 async function loadDashboard(refresh = false) {
+    if (isLoadingState) return;
+    isLoadingState = true;
+    
+    const refreshBtn = document.getElementById('refreshBtn');
+    const dateFromInput = document.getElementById('dateFrom');
+    if (refreshBtn) refreshBtn.disabled = true;
+    if (dateFromInput) dateFromInput.disabled = true;
+    
     const loadingEl = document.getElementById('loadingState');
     const errorEl = document.getElementById('errorState');
     const mainEl = document.getElementById('mainContent');
@@ -327,32 +668,45 @@ async function loadDashboard(refresh = false) {
     mainEl.style.display = 'none';
     
     try {
-        const dateFrom = document.getElementById('dateFrom').value || DEFAULT_DATE_FROM;
-        dashboardData = await fetchDashboard(dateFrom, refresh);
+        const dateFrom = dateFromInput ? dateFromInput.value : '';
+        const selectedDateFrom = dateFrom || DEFAULT_DATE_FROM;
+        dashboardData = await fetchDashboard(selectedDateFrom, refresh);
         
         renderKPIs(dashboardData.summary);
+        renderKPISparklines(dashboardData.projects);
         renderTagAnalysis(dashboardData.tag_buckets, dashboardData.tag_gp_ranks);
-        renderGPChart(dashboardData.tag_gp_ranks);
         populateFilters(dashboardData.projects);
         
-        filteredProjects = dashboardData.projects;
-        renderProjectsTable(filteredProjects);
+        applyFilters();
         
         document.getElementById('lastUpdated').textContent = formatDateTime(dashboardData.fetched_at);
         
         loadingEl.style.display = 'none';
         mainEl.style.display = 'block';
+        
+        // Execute routing logic once data is loaded to show the correct section immediately
+        handleRouting();
     } catch (err) {
         console.error('Load error:', err);
         loadingEl.style.display = 'none';
         errorEl.style.display = 'flex';
         document.getElementById('errorMessage').textContent = err.message;
+    } finally {
+        isLoadingState = false;
+        if (refreshBtn) refreshBtn.disabled = false;
+        if (dateFromInput) dateFromInput.disabled = false;
     }
 }
 
 // ===== Event Listeners =====
 document.addEventListener('DOMContentLoaded', () => {
     loadDashboard();
+    
+    // Set up Hash Router
+    addEventListener('hashchange', handleRouting);
+    
+    // Resize listener for sidebar sliding indicator
+    addEventListener('resize', updateMenuIndicator);
     
     document.getElementById('refreshBtn').addEventListener('click', () => {
         loadDashboard(true);

@@ -1,0 +1,8 @@
+# Sequential Thinking Rule
+
+Bạn bắt buộc phải tuân thủ quy tắc sau:
+- Mỗi khi người dùng bắt đầu một phiên làm việc mới (session mới) hoặc gửi tin nhắn mới, hành động đầu tiên bạn thực hiện là phải sử dụng công cụ MCP `sequential-thinking` (cụ thể là công cụ `sequentialthinking`) để suy nghĩ logic và phân tích yêu cầu từng bước một trước khi thực hiện bất kỳ hành động hoặc phản hồi nào khác.
+
+## Rules for using sequential-thinking
+1. Bắt buộc gọi `sequentialthinking` làm tool call đầu tiên trong turn.
+2. Suy nghĩ một cách hệ thống, tuần tự và chia nhỏ vấn đề.

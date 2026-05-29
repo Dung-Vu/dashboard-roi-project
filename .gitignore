@@ -25,3 +25,11 @@ build/
 # OS
 .DS_Store
 Thumbs.db
+
+# Local testing and reports
+test_results.txt
+test_run.log
+*.log
+
+# Agent local files
+.agents/
