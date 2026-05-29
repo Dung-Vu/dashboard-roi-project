@@ -903,6 +903,49 @@ body {
   font-weight: 600;
 }
 
+.pagination {
+  display: flex;
+  gap: 0.25rem;
+  align-items: center;
+}
+
+.page-btn {
+  background: var(--color-surface-elevated);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  padding: 0.35rem 0.7rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 600;
+  transition: all 0.15s ease;
+  min-width: 32px;
+  text-align: center;
+}
+
+.page-btn:hover:not(.disabled):not(.active) {
+  background: var(--color-emerald);
+  color: white;
+  border-color: var(--color-emerald);
+}
+
+.page-btn.active {
+  background: var(--color-emerald);
+  color: white;
+  border-color: var(--color-emerald);
+}
+
+.page-btn.disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.page-dots {
+  color: var(--color-text-secondary);
+  padding: 0 0.25rem;
+  font-weight: 600;
+}
+
 /* ===== Right Column Tag Insights Panel ===== */
 .tag-insights-list {
   display: flex;

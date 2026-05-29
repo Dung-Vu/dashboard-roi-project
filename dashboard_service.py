@@ -20,6 +20,7 @@ TWO_DECIMALS = Decimal("0.01")
 PROJECTS_DASHBOARD_TTL_SECONDS = 1800  # 30 minutes
 PROJECTS_DASHBOARD_MAX_WORKERS = 24
 DASHBOARD_TARGET_TAGS = ("Nội thất rời", "Giấy dán tường", "Rèm", "Vải nội thất")
+EXCLUDED_SALESPERSONS = ("CEO office", "Đỗ Thị Hải Yến")
 BG_TIERS = (
     ("<10tr", Decimal("10000000")),
     ("10-100tr", Decimal("100000000")),
@@ -182,7 +183,7 @@ class DashboardService:
             ) from exc
 
     def _get_dashboard_sale_orders(self, date_from: str) -> list[dict[str, Any]]:
-        return self.client.search_read(
+        sale_orders = self.client.search_read(
             "sale.order",
             [["date_order", ">=", date_from]],
             [
@@ -193,8 +194,26 @@ class DashboardService:
                 "amount_untaxed",
                 "x_sale_order_tag_ids",
                 "x_studio_selection_field_q4_1imrcsjj8",
+                "user_id",
             ],
         )
+        # Filter out sale orders with salesperson = "CEO office" or "Đỗ Thị Hải Yến"
+        return [
+            order for order in sale_orders
+            if not self._is_excluded_salesperson(order)
+        ]
+
+    @staticmethod
+    def _is_excluded_salesperson(order: dict[str, Any]) -> bool:
+        user_id = order.get("user_id")
+        if (
+            user_id
+            and isinstance(user_id, (list, tuple))
+            and len(user_id) > 1
+            and user_id[1] in EXCLUDED_SALESPERSONS
+        ):
+            return True
+        return False
 
     def _get_projects_for_sale_orders(self, sale_order_ids: list[int]) -> list[dict[str, Any]]:
         if not sale_order_ids:
@@ -352,8 +371,15 @@ class DashboardService:
         return ">200tr"
 
     def _gp_range_label(self, gp_percent: Decimal) -> str:
-        start = int(gp_percent // Decimal("3")) * 3
-        return f"{start}-{start + 3}%"
+        val = int(gp_percent)
+        if val <= 20:
+            return "0-20%"
+        if val <= 40:
+            return "21-40%"
+        # Từ 41% trở đi: bước nhảy 5%
+        start = 41 + ((val - 41) // 5) * 5
+        end = start + 4
+        return f"{start}-{end}%"
 
     def _get_sale_order_tag_map(self, sale_orders: list[dict[str, Any]]) -> dict[int, list[str]]:
         raw_tag_ids = sorted(
@@ -444,6 +470,13 @@ class DashboardService:
             )
 
         sale_order = self._get_sale_order(sale_order_ref[0])
+        if self._is_excluded_salesperson(sale_order):
+            salesperson_name = relation_name(sale_order.get("user_id")) or "unknown"
+            raise OdooAPIError(
+                f"Project linked to excluded salesperson '{salesperson_name}' is not tracked in this dashboard.",
+                model="sale.order",
+                method="search_read",
+            )
         raw_lines = self._get_sale_order_lines(sale_order["id"])
         product_map = self._get_product_map(raw_lines)
         profitability_costs = self._get_profitability_costs(project_id)
@@ -654,7 +687,7 @@ class DashboardService:
         orders = self.client.search_read(
             "sale.order",
             [["id", "=", sale_order_id]],
-            ["id", "name", "partner_id", "currency_id", "date_order", "amount_untaxed", "amount_total"],
+            ["id", "name", "partner_id", "currency_id", "date_order", "amount_untaxed", "amount_total", "user_id"],
             limit=1,
         )
         if not orders:

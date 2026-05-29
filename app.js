@@ -8,6 +8,8 @@ let filteredProjects = [];
 let gpChart = null;
 let revenueDoughnutChart = null;
 let isLoadingState = false;
+let currentPage = 1;
+const ITEMS_PER_PAGE = 10;
 
 // ===== Utility Functions =====
 function escapeHTML(str) {
@@ -470,9 +472,15 @@ function renderProjectsTable(projects) {
     const tbody = document.getElementById('projectsTable');
     tbody.innerHTML = '';
     
+    // Pagination
+    const totalPages = Math.max(1, Math.ceil(projects.length / ITEMS_PER_PAGE));
+    if (currentPage > totalPages) currentPage = totalPages;
+    const startIdx = (currentPage - 1) * ITEMS_PER_PAGE;
+    const pageProjects = projects.slice(startIdx, startIdx + ITEMS_PER_PAGE);
+    
     const fragment = document.createDocumentFragment();
     
-    projects.forEach(p => {
+    pageProjects.forEach(p => {
         const gpClass = p.gp_percent !== null && p.gp_percent >= 0 ? 'gp-positive' : 'gp-negative';
         const stateClass = p.order_state === 'Done' ? 'done' : 
                           p.order_state === 'In progress' ? 'progress' : 'pending';
@@ -524,7 +532,76 @@ function renderProjectsTable(projects) {
     
     tbody.appendChild(fragment);
     
-    document.getElementById('tableInfo').textContent = `Hiển thị ${projects.length} dự án`;
+    const start = projects.length > 0 ? startIdx + 1 : 0;
+    const end = Math.min(startIdx + ITEMS_PER_PAGE, projects.length);
+    document.getElementById('tableInfo').textContent = `Hiển thị ${start}-${end} / ${projects.length} dự án`;
+    renderPagination(projects.length);
+}
+
+function renderPagination(totalItems) {
+    const container = document.getElementById('pagination');
+    container.innerHTML = '';
+    
+    const totalPages = Math.max(1, Math.ceil(totalItems / ITEMS_PER_PAGE));
+    if (totalPages <= 1) return;
+    
+    // Previous button
+    const prevBtn = document.createElement('button');
+    prevBtn.className = 'page-btn' + (currentPage === 1 ? ' disabled' : '');
+    prevBtn.innerHTML = '&laquo;';
+    prevBtn.disabled = currentPage === 1;
+    prevBtn.addEventListener('click', () => { if (currentPage > 1) { currentPage--; renderProjectsTable(filteredProjects); } });
+    container.appendChild(prevBtn);
+    
+    // Page numbers
+    const maxVisible = 5;
+    let startPage = Math.max(1, currentPage - Math.floor(maxVisible / 2));
+    let endPage = Math.min(totalPages, startPage + maxVisible - 1);
+    if (endPage - startPage + 1 < maxVisible) startPage = Math.max(1, endPage - maxVisible + 1);
+    
+    if (startPage > 1) {
+        const firstBtn = document.createElement('button');
+        firstBtn.className = 'page-btn';
+        firstBtn.textContent = '1';
+        firstBtn.addEventListener('click', () => { currentPage = 1; renderProjectsTable(filteredProjects); });
+        container.appendChild(firstBtn);
+        if (startPage > 2) {
+            const dots = document.createElement('span');
+            dots.className = 'page-dots';
+            dots.textContent = '...';
+            container.appendChild(dots);
+        }
+    }
+    
+    for (let i = startPage; i <= endPage; i++) {
+        const btn = document.createElement('button');
+        btn.className = 'page-btn' + (i === currentPage ? ' active' : '');
+        btn.textContent = i;
+        btn.addEventListener('click', () => { currentPage = i; renderProjectsTable(filteredProjects); });
+        container.appendChild(btn);
+    }
+    
+    if (endPage < totalPages) {
+        if (endPage < totalPages - 1) {
+            const dots = document.createElement('span');
+            dots.className = 'page-dots';
+            dots.textContent = '...';
+            container.appendChild(dots);
+        }
+        const lastBtn = document.createElement('button');
+        lastBtn.className = 'page-btn';
+        lastBtn.textContent = totalPages;
+        lastBtn.addEventListener('click', () => { currentPage = totalPages; renderProjectsTable(filteredProjects); });
+        container.appendChild(lastBtn);
+    }
+    
+    // Next button
+    const nextBtn = document.createElement('button');
+    nextBtn.className = 'page-btn' + (currentPage === totalPages ? ' disabled' : '');
+    nextBtn.innerHTML = '&raquo;';
+    nextBtn.disabled = currentPage === totalPages;
+    nextBtn.addEventListener('click', () => { if (currentPage < totalPages) { currentPage++; renderProjectsTable(filteredProjects); } });
+    container.appendChild(nextBtn);
 }
 
 function populateFilters(projects) {
@@ -600,6 +677,7 @@ function applyFilters() {
         return true;
     });
     
+    currentPage = 1;
     renderProjectsTable(filteredProjects);
 }
 
