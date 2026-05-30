@@ -295,7 +295,7 @@ class ProjectsDashboardTest(unittest.TestCase):
 
         payload = service.build_projects_dashboard("2026-01-01", refresh=True)
 
-        self.assertEqual(set(payload.keys()), {"projects", "summary", "tag_buckets", "tag_gp_ranks", "date_from", "fetched_at"})
+        self.assertEqual(set(payload.keys()), {"projects", "summary", "tag_buckets", "tag_gp_ranks", "meta", "date_from", "fetched_at"})
         self.assertEqual(len(payload["projects"]), 3)
         self.assertEqual(payload["summary"]["total_projects"], 3)
         self.assertEqual(payload["summary"]["valid_project_count"], 2)
@@ -306,6 +306,13 @@ class ProjectsDashboardTest(unittest.TestCase):
         self.assertEqual(payload["tag_buckets"]["Nội thất rời"][">200tr"]["count"], 1)
         self.assertEqual(payload["tag_buckets"]["Rèm"]["100-200tr"]["weighted_gp_percent"], 40.0)
         self.assertEqual(payload["tag_buckets"]["Giấy dán tường"]["<10tr"]["count"], 0)
+        self.assertEqual(payload["meta"]["date_field"], "sale.order.date_order")
+        self.assertEqual(payload["meta"]["project_scope"], "all_order_states")
+        self.assertEqual(payload["meta"]["summary_scope"], "done_only")
+        self.assertEqual(payload["meta"]["counts"]["list_projects"], 3)
+        self.assertEqual(payload["meta"]["counts"]["done_projects"], 3)
+        self.assertEqual(payload["meta"]["counts"]["valid_done_projects"], 2)
+        self.assertEqual(payload["meta"]["state_counts"], {"Done": 3})
 
     def test_tier_boundaries(self):
         service = DashboardService(FakeOdooClient())
@@ -315,12 +322,19 @@ class ProjectsDashboardTest(unittest.TestCase):
         self.assertEqual(service._tier_for_amount(Decimal("100000000")), "100-200tr")
         self.assertEqual(service._tier_for_amount(Decimal("200000000")), ">200tr")
 
-    def test_gp_range_label_uses_three_percent_bucket(self):
+    def test_excluded_salesperson_matches_odoo_combined_display_name(self):
+        order = {"user_id": [208, "CEO office, Đỗ Thị Hải Yến"]}
+
+        self.assertTrue(DashboardService._is_excluded_salesperson(order))
+
+    def test_gp_range_label_uses_five_percent_bucket_after_forty(self):
         service = DashboardService(FakeOdooClient())
 
-        self.assertEqual(service._gp_range_label(Decimal("45.0")), "45-48%")
-        self.assertEqual(service._gp_range_label(Decimal("47.999")), "45-48%")
-        self.assertEqual(service._gp_range_label(Decimal("48.0")), "48-51%")
+        self.assertEqual(service._gp_range_label(Decimal("20.0")), "0-20%")
+        self.assertEqual(service._gp_range_label(Decimal("40.0")), "21-40%")
+        self.assertEqual(service._gp_range_label(Decimal("41.0")), "41-45%")
+        self.assertEqual(service._gp_range_label(Decimal("45.999")), "41-45%")
+        self.assertEqual(service._gp_range_label(Decimal("46.0")), "46-50%")
 
     def test_tag_gp_rank_prefers_count_then_total_bg(self):
         service = DashboardService(FakeOdooClient())
@@ -334,9 +348,9 @@ class ProjectsDashboardTest(unittest.TestCase):
 
         ranks = service._build_tag_gp_ranks(rows)
 
-        self.assertEqual(ranks["Rèm"][0]["range"], "45-48%")
+        self.assertEqual(ranks["Rèm"][0]["range"], "51-55%")
         self.assertEqual(ranks["Rèm"][0]["count"], 2)
-        self.assertEqual(ranks["Rèm"][1]["range"], "51-54%")
+        self.assertEqual(ranks["Rèm"][1]["range"], "46-50%")
 
 
 if __name__ == "__main__":

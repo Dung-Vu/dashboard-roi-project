@@ -70,10 +70,9 @@ class FrontendIntegrityTest(unittest.TestCase):
         self.assertIn("fragment.appendChild(tr)", body, 
                       "renderProjectsTable must append elements to fragment")
         
-        # Ensure no tbody.appendChild(tr) inside the forEach loop
-        # We find the projects.forEach part
-        foreach_match = re.search(r"projects\.forEach\([\s\S]*?\}\);", body)
-        self.assertIsNotNone(foreach_match, "Could not find projects.forEach loop")
+        # Ensure no tbody.appendChild(tr) inside the row rendering loop
+        foreach_match = re.search(r"\w+\.forEach\([\s\S]*?fragment\.appendChild\(tr\)[\s\S]*?\}\);", body)
+        self.assertIsNotNone(foreach_match, "Could not find row rendering forEach loop")
         foreach_body = foreach_match.group(0)
         self.assertNotIn("tbody.appendChild(", foreach_body, 
                          "renderProjectsTable must NOT append rows directly to tbody inside loop")
@@ -114,6 +113,9 @@ class FrontendIntegrityTest(unittest.TestCase):
         self.assertIn("menu-indicator", html, "Menu indicator element missing from sidebar-menu!")
         self.assertIn("revenueDoughnutChart", html, "Doughnut chart canvas element missing from rankings view!")
         self.assertIn("tagLeaderboard", html, "Leaderboard container element missing from rankings view!")
+        self.assertIn("dataScopeBar", html, "Data scope bar is required to explain list-vs-KPI counts!")
+        self.assertIn("healthFilter", html, "GP health filter is required in projects table controls!")
+        self.assertIn("stateMixPanel", html, "Operational state mix panel is missing from overview!")
 
     def test_app_js_implements_indicator_and_visuals(self):
         js = self.app_path.read_text(encoding="utf-8")
@@ -121,6 +123,9 @@ class FrontendIntegrityTest(unittest.TestCase):
         self.assertIn("function renderKPISparklines(", js, "renderKPISparklines() missing from app.js!")
         self.assertIn("health-orb-badge", js, "ROI Health orb render markup missing from app.js!")
         self.assertIn("renderRevenueDoughnut(", js, "renderRevenueDoughnut() missing from app.js!")
+        self.assertIn("function renderScopeBar(", js, "renderScopeBar() missing from app.js!")
+        self.assertIn("function renderOperationalPanels(", js, "renderOperationalPanels() missing from app.js!")
+        self.assertIn("function getHealthBucket(", js, "getHealthBucket() missing from app.js!")
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from collections import defaultdict
+from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
@@ -20,7 +20,7 @@ TWO_DECIMALS = Decimal("0.01")
 PROJECTS_DASHBOARD_TTL_SECONDS = 1800  # 30 minutes
 PROJECTS_DASHBOARD_MAX_WORKERS = 24
 DASHBOARD_TARGET_TAGS = ("Nội thất rời", "Giấy dán tường", "Rèm", "Vải nội thất")
-EXCLUDED_SALESPERSONS = ("CEO office", "Đỗ Thị Hải Yến")
+EXCLUDED_SALESPERSONS = ("CEO office", "Đỗ Thị Hải Yến", "CEO office, Đỗ Thị Hải Yến")
 BG_TIERS = (
     ("<10tr", Decimal("10000000")),
     ("10-100tr", Decimal("100000000")),
@@ -149,6 +149,7 @@ class DashboardService:
             "summary": self._build_projects_dashboard_summary(done_rows),
             "tag_buckets": self._build_tag_buckets(done_rows),
             "tag_gp_ranks": self._build_tag_gp_ranks(done_rows),
+            "meta": self._build_projects_dashboard_meta(rows, done_rows, date_from),
             "date_from": date_from,
             "fetched_at": datetime.now(timezone.utc).isoformat(),
         }
@@ -170,6 +171,7 @@ class DashboardService:
             },
             "tag_buckets": {},
             "tag_gp_ranks": {},
+            "meta": self._build_projects_dashboard_meta([], [], date_from),
             "date_from": date_from,
             "fetched_at": datetime.now(timezone.utc).isoformat(),
         }
@@ -202,7 +204,7 @@ class DashboardService:
                 "user_id",
             ],
         )
-        # Filter out sale orders with salesperson = "CEO office" or "Đỗ Thị Hải Yến"
+        # Filter out sale orders owned by the excluded Hai Yen sales account.
         return [
             order for order in sale_orders
             if not self._is_excluded_salesperson(order)
@@ -277,6 +279,31 @@ class DashboardService:
             "total_native_expected_cost": as_money(expected_cost_total),
             "total_gp_amount": as_money(gp_total),
             "weighted_gp_percent": as_money(weighted_gp_percent),
+        }
+
+    def _build_projects_dashboard_meta(
+        self,
+        rows: list[dict[str, Any]],
+        done_rows: list[dict[str, Any]],
+        date_from: str,
+    ) -> dict[str, Any]:
+        valid_done_rows = [row for row in done_rows if as_decimal(row["bg_untaxed"]) > 0]
+        state_counts = Counter(row.get("order_state") or "No state" for row in rows)
+
+        return {
+            "date_field": "sale.order.date_order",
+            "project_scope": "all_order_states",
+            "summary_scope": "done_only",
+            "target_tags": list(DASHBOARD_TARGET_TAGS),
+            "excluded_salespersons": list(EXCLUDED_SALESPERSONS),
+            "counts": {
+                "list_projects": len(rows),
+                "done_projects": len(done_rows),
+                "valid_done_projects": len(valid_done_rows),
+                "non_done_projects": len(rows) - len(done_rows),
+            },
+            "state_counts": dict(sorted(state_counts.items())),
+            "date_from": date_from,
         }
 
     def _build_tag_buckets(self, rows: list[dict[str, Any]]) -> dict[str, dict[str, dict[str, Any]]]:
@@ -381,7 +408,7 @@ class DashboardService:
             return "0-20%"
         if val <= 40:
             return "21-40%"
-        # Từ 41% trở đi: bước nhảy 5%
+        # Từ 41% trở đi: bước nhảy 5 điểm.
         start = 41 + ((val - 41) // 5) * 5
         end = start + 4
         return f"{start}-{end}%"

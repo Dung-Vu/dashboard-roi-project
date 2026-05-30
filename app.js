@@ -5,6 +5,7 @@ const DEFAULT_DATE_FROM = '2026-01-01';
 // GP Health Thresholds
 const GP_HEALTH_HIGH = 40;
 const GP_HEALTH_MEDIUM = 15;
+const UI_STATE_KEY = 'bonario-roi-dashboard-ui-v2';
 
 // Shared State Label Map
 const STATE_LABELS = {
@@ -35,6 +36,7 @@ let currentAbortController = null;
 // Sort state
 let sortColumn = null;
 let sortDirection = 'asc';
+let pendingUIState = {};
 
 // Sortable columns config
 const SORTABLE_COLUMNS = [
@@ -100,6 +102,76 @@ function debounce(fn, delay) {
         clearTimeout(timer);
         timer = setTimeout(() => fn.apply(this, args), delay);
     };
+}
+
+function getElementValue(id) {
+    return document.getElementById(id)?.value || '';
+}
+
+function loadUIState() {
+    try {
+        return JSON.parse(localStorage.getItem(UI_STATE_KEY) || '{}');
+    } catch (err) {
+        return {};
+    }
+}
+
+function saveUIState() {
+    const state = {
+        dateFrom: getElementValue('dateFrom'),
+        search: getElementValue('searchInput'),
+        tag: getElementValue('tagFilter'),
+        state: getElementValue('stateFilter'),
+        health: getElementValue('healthFilter'),
+        sortColumn,
+        sortDirection,
+        route: location.hash || '#/overview',
+    };
+    pendingUIState = state;
+    try {
+        localStorage.setItem(UI_STATE_KEY, JSON.stringify(state));
+    } catch (err) {
+        // Ignore private browsing or storage quota errors.
+    }
+}
+
+function applySavedUIState() {
+    pendingUIState = loadUIState();
+    if (pendingUIState.route && !location.hash) {
+        location.hash = pendingUIState.route;
+    }
+    const dateInput = document.getElementById('dateFrom');
+    if (dateInput && pendingUIState.dateFrom) {
+        dateInput.value = pendingUIState.dateFrom;
+    }
+    const searchInput = document.getElementById('searchInput');
+    if (searchInput && pendingUIState.search) {
+        searchInput.value = pendingUIState.search;
+    }
+    sortColumn = pendingUIState.sortColumn || null;
+    sortDirection = pendingUIState.sortDirection === 'desc' ? 'desc' : 'asc';
+}
+
+function applyPendingFilterSelections() {
+    const filterIds = [
+        ['tagFilter', pendingUIState.tag],
+        ['stateFilter', pendingUIState.state],
+        ['healthFilter', pendingUIState.health],
+    ];
+    filterIds.forEach(([id, value]) => {
+        const el = document.getElementById(id);
+        if (el && value && Array.from(el.options).some(option => option.value === value)) {
+            el.value = value;
+        }
+    });
+}
+
+function getHealthBucket(project) {
+    const gp = project?.gp_percent;
+    if (gp === null || gp === undefined || Number.isNaN(Number(gp))) return 'missing';
+    if (gp > GP_HEALTH_HIGH) return 'high';
+    if (gp >= GP_HEALTH_MEDIUM) return 'medium';
+    return 'low';
 }
 
 // ===== API =====
@@ -229,6 +301,154 @@ function renderKPIs(summary) {
     } else {
         weightedGP.className = 'kpi-subtitle gp-negative';
     }
+}
+
+function getDashboardMeta() {
+    const projects = dashboardData?.projects || [];
+    const summary = dashboardData?.summary || {};
+    const doneCount = Number(summary.total_projects || 0);
+    return dashboardData?.meta || {
+        date_field: 'sale.order.date_order',
+        project_scope: 'all_order_states',
+        summary_scope: 'done_only',
+        counts: {
+            list_projects: projects.length,
+            done_projects: doneCount,
+            valid_done_projects: Number(summary.valid_project_count || 0),
+            non_done_projects: Math.max(projects.length - doneCount, 0),
+        },
+        state_counts: projects.reduce((acc, project) => {
+            const key = project.order_state || 'No state';
+            acc[key] = (acc[key] || 0) + 1;
+            return acc;
+        }, {}),
+        date_from: dashboardData?.date_from || DEFAULT_DATE_FROM,
+    };
+}
+
+function renderScopeBar() {
+    const meta = getDashboardMeta();
+    const counts = meta.counts || {};
+    const setText = (id, value) => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = value;
+    };
+    setText('scopeListCount', counts.list_projects ?? (dashboardData?.projects || []).length);
+    setText('scopeDoneCount', counts.done_projects ?? dashboardData?.summary?.total_projects ?? 0);
+    setText('scopeValidDoneCount', counts.valid_done_projects ?? dashboardData?.summary?.valid_project_count ?? 0);
+    setText('scopeDateFrom', meta.date_from || dashboardData?.date_from || DEFAULT_DATE_FROM);
+}
+
+function renderStateMixPanel() {
+    const container = document.getElementById('stateMixPanel');
+    if (!container) return;
+    container.innerHTML = '';
+    const meta = getDashboardMeta();
+    const stateCounts = Object.entries(meta.state_counts || {})
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 6);
+    const total = Math.max(Number(meta.counts?.list_projects || 0), 1);
+    if (!stateCounts.length) {
+        container.innerHTML = '<div class="ops-empty">Chưa có project trong phạm vi này.</div>';
+        return;
+    }
+    const fragment = document.createDocumentFragment();
+    stateCounts.forEach(([state, count]) => {
+        const item = document.createElement('div');
+        item.className = 'state-mix-item';
+        const percent = (count / total) * 100;
+        item.innerHTML = `
+            <div class="state-mix-row">
+                <span>${escapeHTML(STATE_LABELS[state] || state)}</span>
+                <strong>${count}</strong>
+            </div>
+            <div class="state-mix-track"><span style="width:${percent.toFixed(1)}%"></span></div>
+        `;
+        fragment.appendChild(item);
+    });
+    container.appendChild(fragment);
+}
+
+function renderRiskProjectsPanel() {
+    const container = document.getElementById('riskProjectsPanel');
+    if (!container) return;
+    container.innerHTML = '';
+    const riskyProjects = (dashboardData?.projects || [])
+        .filter(project => project.gp_percent !== null && project.gp_percent !== undefined)
+        .sort((a, b) => Number(a.gp_percent) - Number(b.gp_percent))
+        .slice(0, 5);
+    if (!riskyProjects.length) {
+        container.innerHTML = '<div class="ops-empty">Chưa có GP% để đánh giá.</div>';
+        return;
+    }
+    const fragment = document.createDocumentFragment();
+    riskyProjects.forEach(project => {
+        const item = document.createElement('a');
+        item.className = `risk-item risk-${getHealthBucket(project)}`;
+        item.href = '#/projects';
+        item.innerHTML = `
+            <span>
+                <strong>${escapeHTML(project.sale_order_name || '-')}</strong>
+                <small>${escapeHTML(project.customer || project.project_name || '-')}</small>
+            </span>
+            <b>${formatPercent(project.gp_percent)}</b>
+        `;
+        item.addEventListener('click', () => {
+            const searchInput = document.getElementById('searchInput');
+            if (searchInput) searchInput.value = project.sale_order_name || '';
+            applyFilters();
+        });
+        fragment.appendChild(item);
+    });
+    container.appendChild(fragment);
+}
+
+function renderTagSnapshotPanel() {
+    const container = document.getElementById('tagSnapshotPanel');
+    if (!container) return;
+    container.innerHTML = '';
+    const buckets = dashboardData?.tag_buckets || {};
+    const tags = Object.keys(buckets)
+        .map(tag => {
+            const totals = Object.values(buckets[tag]).reduce((acc, bucket) => {
+                acc.count += bucket.count || 0;
+                acc.bg += bucket.bg_untaxed || 0;
+                acc.gp += bucket.gp_amount || 0;
+                return acc;
+            }, { count: 0, bg: 0, gp: 0 });
+            return {
+                tag,
+                ...totals,
+                gpPercent: totals.bg > 0 ? (totals.gp / totals.bg) * 100 : null,
+            };
+        })
+        .sort((a, b) => b.bg - a.bg)
+        .slice(0, 4);
+    if (!tags.length) {
+        container.innerHTML = '<div class="ops-empty">Chưa có tag Done trong phạm vi này.</div>';
+        return;
+    }
+    const fragment = document.createDocumentFragment();
+    tags.forEach(tag => {
+        const item = document.createElement('div');
+        item.className = 'tag-snapshot-item';
+        item.innerHTML = `
+            <span>
+                <strong>${escapeHTML(tag.tag)}</strong>
+                <small>${tag.count} dự án Done · ${formatVND(tag.bg)}</small>
+            </span>
+            <b>${formatPercent(tag.gpPercent)}</b>
+        `;
+        fragment.appendChild(item);
+    });
+    container.appendChild(fragment);
+}
+
+function renderOperationalPanels() {
+    renderScopeBar();
+    renderStateMixPanel();
+    renderRiskProjectsPanel();
+    renderTagSnapshotPanel();
 }
 
 function renderTagAnalysis(tagBuckets, tagGPRanks) {
@@ -600,6 +820,7 @@ function toggleSort(columnKey) {
         sortColumn = columnKey;
         sortDirection = 'asc';
     }
+    saveUIState();
     renderProjectsTable(filteredProjects);
 }
 
@@ -618,7 +839,7 @@ function exportCSV() {
     if (!filteredProjects || filteredProjects.length === 0) return;
     
     const headers = ['Đơn hàng', 'Dự án', 'Khách hàng', 'Tags', 'Trạng thái', 'Doanh thu', 'Chi phí', 'GP', 'GP%'];
-    const rows = filteredProjects.map(p => [
+    const rows = applySorting(filteredProjects).map(p => [
         p.sale_order_name || '',
         p.project_name || '',
         p.customer || '',
@@ -654,9 +875,8 @@ function renderExportButton() {
     if (!exportBtn) {
         exportBtn = document.createElement('button');
         exportBtn.id = 'exportCsvBtn';
-        exportBtn.textContent = '📥 Xuất CSV';
-        exportBtn.className = 'export-csv-btn';
-        exportBtn.style.cssText = 'margin-left:12px;padding:4px 12px;border:1px solid var(--color-emerald, #107850);background:transparent;color:var(--color-emerald, #107850);border-radius:6px;cursor:pointer;font-size:0.8rem;font-weight:600;';
+        exportBtn.innerHTML = '<i class="fas fa-download" aria-hidden="true"></i><span>Xuất CSV</span>';
+        exportBtn.className = 'btn btn-export compact';
         exportBtn.addEventListener('click', exportCSV);
         tableInfo.parentElement.insertBefore(exportBtn, tableInfo.nextSibling);
     }
@@ -667,19 +887,20 @@ function updateFilterIndicators() {
     const searchTerm = document.getElementById('searchInput').value.trim();
     const tagFilter = document.getElementById('tagFilter').value;
     const stateFilter = document.getElementById('stateFilter').value;
-    const hasActiveFilters = searchTerm || tagFilter || stateFilter;
+    const healthFilter = document.getElementById('healthFilter')?.value || '';
+    const hasActiveFilters = searchTerm || tagFilter || stateFilter || healthFilter;
     
     let clearBtn = document.getElementById('clearFiltersBtn');
     if (!clearBtn) {
         clearBtn = document.createElement('button');
         clearBtn.id = 'clearFiltersBtn';
         clearBtn.textContent = '✕ Xóa bộ lọc';
-        clearBtn.style.cssText = 'padding:4px 10px;border:1px solid #e74c3c;background:transparent;color:#e74c3c;border-radius:6px;cursor:pointer;font-size:0.78rem;font-weight:600;margin-left:8px;display:none;';
+        clearBtn.className = 'clear-filters-btn';
         clearBtn.addEventListener('click', clearFilters);
         // Append near the filter controls
-        const filterContainer = document.getElementById('searchInput');
-        if (filterContainer && filterContainer.parentElement) {
-            filterContainer.parentElement.appendChild(clearBtn);
+        const filterContainer = document.querySelector('.table-filters-box');
+        if (filterContainer) {
+            filterContainer.appendChild(clearBtn);
         }
     }
     clearBtn.style.display = hasActiveFilters ? 'inline-block' : 'none';
@@ -689,6 +910,8 @@ function clearFilters() {
     document.getElementById('searchInput').value = '';
     document.getElementById('tagFilter').value = '';
     document.getElementById('stateFilter').value = '';
+    const healthFilter = document.getElementById('healthFilter');
+    if (healthFilter) healthFilter.value = '';
     applyFilters();
 }
 
@@ -971,6 +1194,7 @@ function populateFilters(projects) {
         opt.textContent = STATE_LABELS[state] || state;
         stateFilter.appendChild(opt);
     });
+    applyPendingFilterSelections();
 }
 
 // ===== Filter & Search =====
@@ -980,6 +1204,7 @@ function applyFilters() {
     const searchTerm = document.getElementById('searchInput').value.trim().toLowerCase();
     const tagFilter = document.getElementById('tagFilter').value;
     const stateFilter = document.getElementById('stateFilter').value;
+    const healthFilter = document.getElementById('healthFilter')?.value || '';
     
     filteredProjects = dashboardData.projects.filter(p => {
         // Search
@@ -997,6 +1222,9 @@ function applyFilters() {
         
         // State filter
         if (stateFilter && p.order_state !== stateFilter) return false;
+
+        // GP health filter
+        if (healthFilter && getHealthBucket(p) !== healthFilter) return false;
         
         return true;
     });
@@ -1004,6 +1232,7 @@ function applyFilters() {
     currentPage = 1;
     renderProjectsTable(filteredProjects);
     updateFilterIndicators();
+    saveUIState();
 }
 
 // ===== SPA Router =====
@@ -1058,6 +1287,7 @@ function handleRouting() {
     
     // Update menu indicator position vertical
     updateMenuIndicator();
+    saveUIState();
 }
 
 // ===== Main =====
@@ -1089,15 +1319,26 @@ async function loadDashboard(refresh = false) {
         const dateFrom = dateFromInput ? dateFromInput.value : '';
         const selectedDateFrom = dateFrom || DEFAULT_DATE_FROM;
         dashboardData = await fetchDashboard(selectedDateFrom, refresh);
+        if (dateFromInput) dateFromInput.value = dashboardData.date_from || selectedDateFrom;
+        if (gpChart) {
+            gpChart.destroy();
+            gpChart = null;
+        }
+        if (revenueDoughnutChart) {
+            revenueDoughnutChart.destroy();
+            revenueDoughnutChart = null;
+        }
         
         renderKPIs(dashboardData.summary);
         renderKPISparklines(dashboardData.projects);
+        renderOperationalPanels();
         renderTagAnalysis(dashboardData.tag_buckets, dashboardData.tag_gp_ranks);
         populateFilters(dashboardData.projects);
         
         applyFilters();
         
         document.getElementById('lastUpdated').textContent = formatDateTime(dashboardData.fetched_at);
+        saveUIState();
         
         if (loadingEl) loadingEl.style.display = 'none';
         if (mainEl) mainEl.style.display = 'block';
@@ -1123,6 +1364,7 @@ async function loadDashboard(refresh = false) {
 
 // ===== Event Listeners =====
 document.addEventListener('DOMContentLoaded', () => {
+    applySavedUIState();
     loadDashboard();
     
     // Set up Hash Router
@@ -1145,6 +1387,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     
     document.getElementById('dateFrom').addEventListener('change', () => {
+        saveUIState();
         loadDashboard(true);
     });
     
@@ -1153,6 +1396,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('searchInput').addEventListener('input', debouncedApplyFilters);
     document.getElementById('tagFilter').addEventListener('change', applyFilters);
     document.getElementById('stateFilter').addEventListener('change', applyFilters);
+    document.getElementById('healthFilter').addEventListener('change', applyFilters);
     
     // Table header sort click handlers
     document.querySelectorAll('th.sortable').forEach(th => {

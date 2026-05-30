@@ -175,18 +175,35 @@
                 
                 <!-- Top Header Bar -->
                 <header class="top-header glass-panel">
-                    <div class="header-search">
-                        <div class="search-box">
-                            <i class="fas fa-search search-icon" aria-hidden="true"></i>
-                            <input type="text" id="searchInput" placeholder="Tìm mã BG, dự án, khách hàng..." aria-label="Search projects">
-                        </div>
-                    </div>
                     <div class="header-meta">
                         <div class="status-indicator">
                             <span>Đồng bộ cuối: <strong id="lastUpdated">-</strong></span>
                         </div>
                     </div>
                 </header>
+
+                <section id="dataScopeBar" class="data-scope-bar" aria-label="Dashboard data scope">
+                    <div class="scope-pill">
+                        <span class="scope-label">List</span>
+                        <strong id="scopeListCount">0</strong>
+                        <span>mọi trạng thái</span>
+                    </div>
+                    <div class="scope-pill">
+                        <span class="scope-label">KPI</span>
+                        <strong id="scopeDoneCount">0</strong>
+                        <span>Hoàn tất</span>
+                    </div>
+                    <div class="scope-pill">
+                        <span class="scope-label">Valid</span>
+                        <strong id="scopeValidDoneCount">0</strong>
+                        <span>BG > 0</span>
+                    </div>
+                    <div class="scope-pill muted">
+                        <span class="scope-label">Từ ngày</span>
+                        <strong id="scopeDateFrom">2026-01-01</strong>
+                        <span>ngày báo giá</span>
+                    </div>
+                </section>
 
                 <!-- Route 1: Tổng quan dự án -->
                 <section id="overview-route" class="route-view active">
@@ -241,38 +258,28 @@
                         </div>
                     </div>
 
-                    <!-- Welcome Panel to fill space beautifully -->
-                    <div class="glass-panel" style="margin-top: 2rem; padding: 2.5rem;">
-                        <h2 class="welcome-panel-heading">
-                            <i class="fas fa-seedling" aria-hidden="true"></i>
-                            Bonario ROI Dashboard
-                        </h2>
-                        <p class="welcome-panel-desc">
-                            Hệ thống phân tích lợi nhuận gộp (Gross Profit) và hiệu suất tài chính thời gian thực cho các dự án của Bonario. Dữ liệu được đồng bộ trực tiếp từ hệ thống Odoo để mang lại cái nhìn toàn diện và chính xác nhất.
-                        </p>
-                        <div class="welcome-cards-grid">
-                            <a href="#/tags" class="welcome-card-link" style="text-decoration: none;">
-                                <div class="glass-panel welcome-sub-card welcome-card">
-                                    <i class="fas fa-tags welcome-card-icon" aria-hidden="true"></i>
-                                    <h4 class="welcome-card-title">Hiệu suất Tags</h4>
-                                    <p class="welcome-card-desc">Xem đóng góp doanh thu của từng nhóm Tag.</p>
-                                </div>
-                            </a>
-                            <a href="#/projects" class="welcome-card-link" style="text-decoration: none;">
-                                <div class="glass-panel welcome-sub-card welcome-card">
-                                    <i class="fas fa-list-ul welcome-card-icon" aria-hidden="true"></i>
-                                    <h4 class="welcome-card-title">Danh sách chi tiết</h4>
-                                    <p class="welcome-card-desc">Bộ lọc thông minh và số liệu chi tiết của dự án.</p>
-                                </div>
-                            </a>
-                            <a href="#/ranks" class="welcome-card-link" style="text-decoration: none;">
-                                <div class="glass-panel welcome-sub-card welcome-card">
-                                    <i class="fas fa-trophy welcome-card-icon" aria-hidden="true"></i>
-                                    <h4 class="welcome-card-title">Xếp hạng & Biểu đồ</h4>
-                                    <p class="welcome-card-desc">Trực quan hóa phân bổ GP% theo nhóm Tag.</p>
-                                </div>
-                            </a>
-                        </div>
+                    <div class="ops-grid">
+                        <section class="ops-panel glass-panel">
+                            <div class="ops-panel-header">
+                                <h2><i class="fas fa-layer-group" aria-hidden="true"></i> Mix trạng thái</h2>
+                                <a href="#/projects" class="ops-link">Xem list</a>
+                            </div>
+                            <div id="stateMixPanel" class="state-mix-list"></div>
+                        </section>
+                        <section class="ops-panel glass-panel">
+                            <div class="ops-panel-header">
+                                <h2><i class="fas fa-triangle-exclamation" aria-hidden="true"></i> GP cần chú ý</h2>
+                                <a href="#/projects" class="ops-link">Lọc chi tiết</a>
+                            </div>
+                            <div id="riskProjectsPanel" class="risk-list"></div>
+                        </section>
+                        <section class="ops-panel glass-panel">
+                            <div class="ops-panel-header">
+                                <h2><i class="fas fa-tags" aria-hidden="true"></i> Tag đang đóng góp</h2>
+                                <a href="#/tags" class="ops-link">Phân tích tag</a>
+                            </div>
+                            <div id="tagSnapshotPanel" class="tag-snapshot-list"></div>
+                        </section>
                     </div>
                 </section>
 
@@ -298,6 +305,10 @@
                                 Danh sách dự án chi tiết
                             </h2>
                             <div class="table-filters-box">
+                                <div class="search-box project-search-box">
+                                    <i class="fas fa-search search-icon" aria-hidden="true"></i>
+                                    <input type="text" id="searchInput" placeholder="Tìm mã BG, dự án, khách hàng..." aria-label="Search projects">
+                                </div>
                                 <select id="tagFilter" class="filter-select" aria-label="Filter by tag">
                                     <option value="">Tất cả tags</option>
                                 </select>
@@ -306,6 +317,13 @@
                                     <option value="Done">Hoàn tất</option>
                                     <option value="In progress">Đang xử lý</option>
                                     <option value="Need process">Cần xử lý</option>
+                                </select>
+                                <select id="healthFilter" class="filter-select" aria-label="Filter by GP health">
+                                    <option value="">Tất cả GP</option>
+                                    <option value="high">GP tốt (&gt; 40%)</option>
+                                    <option value="medium">GP cần theo dõi (15-40%)</option>
+                                    <option value="low">GP thấp (&lt; 15%)</option>
+                                    <option value="missing">Chưa có GP</option>
                                 </select>
                             </div>
                         </div>
