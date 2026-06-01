@@ -848,14 +848,14 @@ html, body {
 }
 
 .kpi-card {
-  padding: 24px;
+  padding: 16px 20px; /* Reduced from 24px */
 }
 
 .kpi-header {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  margin-bottom: 15px;
+  margin-bottom: 8px; /* Reduced from 15px */
 }
 
 .kpi-title {
