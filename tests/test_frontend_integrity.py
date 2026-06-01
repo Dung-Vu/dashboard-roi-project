@@ -13,6 +13,9 @@ class FrontendIntegrityTest(unittest.TestCase):
     def _extract_function(self, js: str, func_name: str) -> str | None:
         start_idx = js.find(f"function {func_name}")
         if start_idx == -1:
+            # Also support 'export function func_name'
+            start_idx = js.find(f"export function {func_name}")
+        if start_idx == -1:
             return None
         
         open_brace_idx = js.find("{", start_idx)
@@ -33,6 +36,15 @@ class FrontendIntegrityTest(unittest.TestCase):
             return js[start_idx:current_idx]
         return None
 
+    def get_combined_js(self) -> str:
+        # Search all Javascript source files (app.js and assets/js/**/*.js)
+        js_files = [self.root_dir / "app.js"] + sorted(list((self.root_dir / "assets" / "js").glob("**/*.js")))
+        combined = []
+        for f in js_files:
+            if f.exists():
+                combined.append(f.read_text(encoding="utf-8"))
+        return "\n".join(combined)
+
     def test_index_html_loads_app_js_as_es_module(self):
         self.assertTrue(self.index_path.exists(), "index.html does not exist!")
         html = self.index_path.read_text(encoding="utf-8")
@@ -41,12 +53,12 @@ class FrontendIntegrityTest(unittest.TestCase):
 
     def test_app_js_defines_escape_html(self):
         self.assertTrue(self.app_path.exists(), "app.js does not exist!")
-        js = self.app_path.read_text(encoding="utf-8")
+        js = self.get_combined_js()
         self.assertIn("function escapeHTML(", js, "app.js must define escapeHTML function")
 
     def test_app_js_escapes_all_required_injection_points(self):
         self.assertTrue(self.app_path.exists(), "app.js does not exist!")
-        js = self.app_path.read_text(encoding="utf-8")
+        js = self.get_combined_js()
         
         # Verify required escapeHTML injections
         self.assertIn("escapeHTML(p.sale_order_name", js, "p.sale_order_name must be escaped")
@@ -59,7 +71,7 @@ class FrontendIntegrityTest(unittest.TestCase):
 
     def test_app_js_uses_document_fragment_for_table_rendering(self):
         self.assertTrue(self.app_path.exists(), "app.js does not exist!")
-        js = self.app_path.read_text(encoding="utf-8")
+        js = self.get_combined_js()
         
         # Extract renderProjectsTable body
         body = self._extract_function(js, "renderProjectsTable")
@@ -71,7 +83,7 @@ class FrontendIntegrityTest(unittest.TestCase):
                       "renderProjectsTable must append elements to fragment")
         
         # Ensure no tbody.appendChild(tr) inside the row rendering loop
-        foreach_match = re.search(r"\w+\.forEach\([\s\S]*?fragment\.appendChild\(tr\)[\s\S]*?\}\);", body)
+        foreach_match = re.search(r"\w+\.forEach\([\s\S]*?fragment\.appendChild\(tr\)[\s\S]*?\);", body)
         self.assertIsNotNone(foreach_match, "Could not find row rendering forEach loop")
         foreach_body = foreach_match.group(0)
         self.assertNotIn("tbody.appendChild(", foreach_body, 
@@ -79,7 +91,7 @@ class FrontendIntegrityTest(unittest.TestCase):
 
     def test_app_js_uses_document_fragment_for_tag_analysis_rendering(self):
         self.assertTrue(self.app_path.exists(), "app.js does not exist!")
-        js = self.app_path.read_text(encoding="utf-8")
+        js = self.get_combined_js()
         
         # Extract renderTagAnalysis body
         body = self._extract_function(js, "renderTagAnalysis")
@@ -91,7 +103,7 @@ class FrontendIntegrityTest(unittest.TestCase):
                       "renderTagAnalysis must append elements to fragment")
         
         # Ensure no container.appendChild(card) inside the loop
-        foreach_match = re.search(r"tags\.forEach\([\s\S]*?\}\);", body)
+        foreach_match = re.search(r"tags\.forEach\([\s\S]*?\);", body)
         self.assertIsNotNone(foreach_match, "Could not find tags.forEach loop")
         foreach_body = foreach_match.group(0)
         self.assertNotIn("container.appendChild(", foreach_body, 
@@ -99,7 +111,7 @@ class FrontendIntegrityTest(unittest.TestCase):
 
     def test_no_global_scope_leaks_to_window(self):
         self.assertTrue(self.app_path.exists(), "app.js does not exist!")
-        js = self.app_path.read_text(encoding="utf-8")
+        js = self.get_combined_js()
         self.assertNotIn("window.", js, "Do not assign top-level variables to window object")
 
     def test_phase_2_orbs_and_particles_exist(self):
@@ -118,7 +130,7 @@ class FrontendIntegrityTest(unittest.TestCase):
         self.assertIn("stateMixPanel", html, "Operational state mix panel is missing from overview!")
 
     def test_app_js_implements_indicator_and_visuals(self):
-        js = self.app_path.read_text(encoding="utf-8")
+        js = self.get_combined_js()
         self.assertIn("function updateMenuIndicator(", js, "updateMenuIndicator() missing from app.js!")
         self.assertIn("function renderKPISparklines(", js, "renderKPISparklines() missing from app.js!")
         self.assertIn("health-orb-badge", js, "ROI Health orb render markup missing from app.js!")

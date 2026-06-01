@@ -65,3 +65,51 @@ Xây dựng một thanh sáng kính mờ `.menu-indicator` ở Sidebar. Khi clic
 - [ ] Trang ranks hiển thị đồng thời cả Bar Chart phân bổ GP% và Doughnut Chart tỷ trọng doanh thu Tag.
 - [ ] Bảng xếp hạng Tag Leaderboard hiển thị chính xác các tag có doanh thu và GP% cao nhất.
 - [ ] Thanh chỉ báo menu Sidebar trượt trơn tru từ tab cũ sang tab mới mỗi khi URL hash thay đổi.
+
+## Follow-up — 2026-05-30T13:46:58+07:00
+
+Refactoring mã nguồn Frontend của dự án ROI Project Dashboard bằng cách phân rã file `app.js` monolithic khổng lồ thành các ES6 Modules nguyên bản đặt trong thư mục `assets/js` để tối ưu hóa hiệu năng, tính bảo mật, và khả năng bảo trì.
+
+Working directory: `d:\dashboard-roi-project`
+Integrity mode: `development`
+
+## Requirements
+
+### R1. Phân rã app.js thành các ES6 Modules trong assets/js/
+Chia tách `app.js` thành các file module chuyên trách:
+- `assets/js/config.js`: Định nghĩa các hằng số, ngưỡng GP Health, và `STATE_LABELS`.
+- `assets/js/utils.js`: Chứa hàm định dạng VND, full VND, phần trăm, format date, debounce, và `escapeHTML`.
+- `assets/js/api.js`: Đóng gói logic fetch dữ liệu `/api/projects-dashboard` với cơ chế AbortController và timeout 60 giây.
+- `assets/js/state.js`: Lưu trữ State ứng dụng toàn cục và quản lý tải/ghi UI State vào LocalStorage.
+- `assets/js/charts.js`: Đóng gói logic vẽ biểu đồ cột GP% (`gpChart`), biểu đồ tròn Doanh thu (`revenueDoughnutChart`) và Sparklines cho thẻ KPI. Tự động gọi `destroy()` trên các instance biểu đồ cũ khi nạp dữ liệu mới để tránh rò rỉ bộ nhớ.
+- `assets/js/components/`:
+  - `table.js`: Logic render bảng danh sách dự án, phân trang, hiển thị trạng thái và xuất file CSV.
+  - `dashboard-kpi.js`: Logic cập nhật các thẻ KPI trên màn hình chính và thanh dữ liệu Scope bar.
+  - `ops-panels.js`: Logic vẽ các danh sách bổ trợ (Mix trạng thái, GP rủi ro, Tag snapshot).
+
+### R2. Entry point app.js tinh gọn
+- `app.js` đóng vai trò là entry point chính của ứng dụng.
+- File này chỉ chứa các câu lệnh `import` các module cần thiết và thiết lập bộ lắng nghe sự kiện `DOMContentLoaded` để khởi động ứng dụng.
+
+### R3. Áp dụng Event Delegation cho Checkbox trong Table
+- Loại bỏ hàm `attachCheckboxListeners` cũ (vốn lặp đi lặp lại việc gán event listener lên từng checkbox khi vẽ lại bảng).
+- Thay thế bằng cơ chế Ủy quyền sự kiện (Event Delegation) duy nhất trên element `#projectsTable` (hoặc thẻ table tương ứng) để lắng nghe thay đổi của checkbox, tối ưu hóa bộ nhớ và tăng tốc độ vẽ DOM.
+
+### R4. Tương thích hoàn toàn với Backend Flask
+- Đảm bảo các module được tải tự động qua route `/assets/js/<file>.js` mà không phải chỉnh sửa bất kỳ dòng code nào của `app.py` hay thay đổi cơ sở hạ tầng phục vụ của Flask.
+- Sử dụng các tính năng chuẩn ES6 có sẵn trên trình duyệt hiện đại (native ES6 modules), không tích hợp các công cụ build (npm/Vite/Webpack) nhằm duy trì dự án ở mức nhẹ tối đa.
+
+## Acceptance Criteria
+
+### Giao diện & Trình duyệt
+- [ ] Ứng dụng nạp thành công ở trang chủ `http://localhost:5056` mà không phát sinh bất kỳ cảnh báo hoặc lỗi JS nào trong Console của trình duyệt.
+- [ ] Màn hình tải (Loading overlay) và màn hình thông báo lỗi (Error state) hoạt động chính xác khi đồng bộ.
+
+### Logic Điều hiện & Chức năng
+- [ ] Chuyển đổi giữa các màn hình (SPA Hash Router: `/overview`, `/tags`, `/projects`, `/ranks`) hoạt động mượt mà và thanh trượt menu indicator ở Sidebar di chuyển chính xác.
+- [ ] Các tính năng Lọc (Filter theo tag, status, GP health), Tìm kiếm (Search có debounce 300ms) hoạt động đồng bộ với dữ liệu hiển thị.
+- [ ] Chức năng sắp xếp cột (Sorting) và phân trang (Pagination) hoạt động đúng như phiên bản cũ.
+
+### Quản lý Trạng thái & Biểu đồ
+- [ ] Việc chọn nhiều dự án (Multi-select) cập nhật chính xác tổng giá trị trên thanh trạng thái lựa chọn và tính đúng GP% trung bình có trọng số.
+- [ ] Các biểu đồ Chart.js (Bar chart, Doughnut chart) và Sparklines hiển thị đẹp mắt, tự động thay đổi kích thước (`resize()`) chuẩn xác khi chuyển trang hoặc co giãn màn hình, và không bị lỗi chồng lấn/rò rỉ canvas cũ.

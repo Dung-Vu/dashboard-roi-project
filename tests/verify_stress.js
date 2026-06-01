@@ -130,15 +130,42 @@ const sandbox = {
     }
 };
 
-// 2. Load and execute app.js in context
-const appJsPath = path.join(__dirname, '../app.js');
-let appJsCode = fs.readFileSync(appJsPath, 'utf8');
+// 2. Load all JS modules in dependency resolution order, strip import/export, and concatenate
+const modules = [
+    'assets/js/config.js',
+    'assets/js/utils.js',
+    'assets/js/state.js',
+    'assets/js/api.js',
+    'assets/js/charts.js',
+    'assets/js/components/dashboard-kpi.js',
+    'assets/js/components/table.js',
+    'assets/js/components/ops-panels.js',
+    'app.js'
+];
 
-// Strip out the event listener at the end so it doesn't auto-run loadDashboard() during context execution
-appJsCode = appJsCode.replace(/document\.addEventListener\('DOMContentLoaded'[\s\S]*\}\);?\s*$/, '');
+let combinedCode = '';
+for (const mod of modules) {
+    const modPath = path.join(__dirname, '..', mod);
+    let modCode = fs.readFileSync(modPath, 'utf8');
+
+    // Strip imports
+    modCode = modCode.replace(/import\s+(?:[\w*\s{},]*)\s+from\s+['"].*?['"];?/g, '');
+
+    // Strip exports
+    modCode = modCode.replace(/\bexport\s+(const|let|var|function|async\s+function|class)\b/g, '$1');
+    modCode = modCode.replace(/\bexport\s+\{\s*[\w\s,]*\s*\};?/g, '');
+
+    combinedCode += '\n// --- MODULE: ' + mod + ' ---\n' + modCode;
+}
+
+// Strip out the DOMContentLoaded event listener at the end so it doesn't auto-run loadDashboard() during context execution
+combinedCode = combinedCode.replace(/document\.addEventListener\('DOMContentLoaded'[\s\S]*\}\);?\s*$/, '');
+
+// Write to debug file
+fs.writeFileSync(path.join(__dirname, 'debug_combined.js'), combinedCode);
 
 vm.createContext(sandbox);
-vm.runInContext(appJsCode, sandbox);
+vm.runInContext(combinedCode, sandbox);
 
 // 3. Test Cases
 console.log("--- Starting Frontend Adversarial Stress Tests ---");
@@ -166,11 +193,11 @@ try {
 
     // Execute with empty projects array
     sandbox.renderKPISparklines([]);
-    
+
     // Verify robustness: did it clear old sparklines?
     const cards = documentMock.querySelectorAll('.kpi-card');
     const firstCardCleared = cards[0].sparklineRemoved;
-    
+
     // If it returned early without clearing, sparklineRemoved will be false!
     assert(firstCardCleared, "Assert that the sparkline visual is cleared when projects are empty (firstCardCleared is true).");
 } catch (err) {
@@ -181,7 +208,7 @@ try {
 // TEST 2: GP% negative, extremely high, null, undefined in health orb badge formatting
 try {
     const tbody = documentMock.getElementById('projectsTable');
-    
+
     const adversarialProjects = [
         { sale_order_name: "SO001", project_name: "Negative GP", customer: "A", tags: [], order_state: "Done", bg_untaxed: 100, native_expected_cost: 150, gp_amount: -50, gp_percent: -50 },
         { sale_order_name: "SO002", project_name: "Extreme GP", customer: "B", tags: [], order_state: "Done", bg_untaxed: 100, native_expected_cost: 0, gp_amount: 150, gp_percent: 150 },
@@ -191,19 +218,19 @@ try {
 
     tbody.innerHTML = '';
     sandbox.renderProjectsTable(adversarialProjects);
-    
+
     // Get fragment children appended to tbody
     const children = tbody.children || [];
     assert(children.length === 4, "renderProjectsTable rendered exactly 4 rows.");
-    
+
     // Row 1: Negative GP (-50) -> should be health-coral
     const row1HTML = children[0].innerHTML;
     assert(row1HTML.includes('health-orb-badge health-coral') && row1HTML.includes('-50.0%'), "Negative GP% (-50.0%) correctly maps to health-coral style.");
-    
+
     // Row 2: Extreme GP (150) -> should be health-green
     const row2HTML = children[1].innerHTML;
     assert(row2HTML.includes('health-orb-badge health-green') && row2HTML.includes('150.0%'), "Extremely high GP% (150.0%) correctly maps to health-green style.");
-    
+
     // Row 3 & 4: Null/Undefined GP -> should show hyphen '-'
     const row3HTML = children[2].innerHTML;
     const row4HTML = children[3].innerHTML;
@@ -217,7 +244,7 @@ try {
 // TEST 3: Null and Undefined summary.weighted_gp_percent in renderKPIs()
 try {
     const weightedGP = documentMock.getElementById('weightedGP');
-    
+
     // Test with null
     sandbox.renderKPIs({
         total_projects: 0,
@@ -227,7 +254,7 @@ try {
         total_gp_amount: 0,
         weighted_gp_percent: null
     });
-    
+
     assert(weightedGP.className === 'kpi-subtitle', "Assert that a null weighted GP% styles the subtitle as neutral 'kpi-subtitle'.");
 
     // Test with undefined
