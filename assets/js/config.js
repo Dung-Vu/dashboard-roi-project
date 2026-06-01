@@ -9,7 +9,7 @@ export const COMPANY_OPTIONS = [
 export const GP_HEALTH_HIGH = 40;
 export const GP_HEALTH_MEDIUM = 15;
 export const UI_STATE_KEY = 'bonario-roi-dashboard-ui-v2';
-export const ITEMS_PER_PAGE = 8;
+export const ITEMS_PER_PAGE = 10;
 
 export const STATE_LABELS = {
     'Done': 'Hoàn tất',
