@@ -4,6 +4,11 @@ import unittest
 from decimal import Decimal
 from pathlib import Path
 
+import os
+# Isolate test cache database to prevent contamination of the production database
+TEST_CACHE_DB = Path(__file__).parent / "test_cache.db"
+os.environ["CACHE_DB_PATH"] = str(TEST_CACHE_DB)
+
 from dashboard_service import DashboardService
 
 
@@ -308,7 +313,7 @@ class ProjectsDashboardTest(unittest.TestCase):
 
         payload = service.build_projects_dashboard("2026-01-01", refresh=True)
 
-        self.assertEqual(set(payload.keys()), {"projects", "summary", "tag_buckets", "tag_gp_ranks", "meta", "date_from", "company", "fetched_at"})
+        self.assertEqual(set(payload.keys()), {"projects", "summary", "tag_buckets", "tag_gp_ranks", "meta", "date_from", "company", "fetched_at", "cached_at"})
         self.assertEqual(len(payload["projects"]), 3)
         self.assertEqual(payload["summary"]["total_projects"], 3)
         self.assertEqual(payload["summary"]["valid_project_count"], 2)
@@ -504,3 +509,13 @@ class ProjectsDashboardTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def tearDownModule():
+    # Clean up test database cache file
+    test_db = Path(__file__).parent / "test_cache.db"
+    if test_db.exists():
+        try:
+            test_db.unlink()
+        except Exception:
+            pass

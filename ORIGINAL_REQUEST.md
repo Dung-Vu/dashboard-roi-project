@@ -221,3 +221,187 @@ Trong hàm `build_projects_dashboard` của dashboard_service.py:
 - [ ] Bảng chi tiết dự án (Projects page) chỉ hiển thị đúng các dự án thuộc công ty được chọn ở Sidebar.
 - [ ] Các thẻ KPI tài chính và Scope bar ở trang Overview chỉ tổng hợp số liệu của công ty được chọn.
 
+## Follow-up — 2026-06-01T20:22:59+07:00
+
+Cập nhật toàn diện giao diện Bonario ROI Dashboard sang tông màu xanh lam pastel sáng cao cấp (Soft Coastal Pastel Blue), thiết lập phạm vi mặc định là "Tất cả công ty" (All companies) ở cả Backend & Frontend, và tinh chỉnh trực quan biểu đồ cột GP% (skipNull và tối ưu độ dày cột).
+
+Working directory: `d:\dashboard-roi-project`
+Integrity mode: `development`
+
+## Requirements
+
+### R1. Hỗ trợ hiển thị mặc định "Tất cả công ty" (All companies)
+*   **Backend (`dashboard_service.py`):**
+    *   Thêm khóa `"all"` vào `COMPANY_SCOPES` với nhãn là `"Tất cả công ty"` và aliases tương ứng (`all`, `tat ca`, `tatca`).
+    *   Cập nhật logic `build_projects_dashboard` để nếu `company_key` is `"all"`, bỏ qua việc lọc danh sách dự án theo `company_key` (giữ lại và xử lý dữ liệu của tất cả các công ty).
+*   **Backend (`app.py`):**
+    *   Thay đổi giá trị mặc định của tham số `company` trong endpoint `/api/projects-dashboard` từ `"bonario"` thành `"all"`.
+*   **Frontend (`assets/js/config.js`):**
+    *   Đổi giá trị hằng số `DEFAULT_COMPANY` thành `'all'`.
+    *   Thêm tùy chọn `{ key: 'all', label: 'Tất cả công ty' }` vào đầu mảng `COMPANY_OPTIONS`.
+
+### R2. Đổi giao diện sang tông màu Xanh lam pastel sáng (Soft Coastal Pastel Blue)
+*   **styles.css:**
+    *   Tại `body`, loại bỏ thuộc tính ảnh nền `url('assets/bg.png')` cũ. Thay bằng dải màu chuyển sắc lam sáng mượt mà: `background-image: linear-gradient(135deg, #f0f4f8 0%, #e6ecf2 100%);`.
+    *   Cập nhật biến màu `:root` để chuyển đổi sang hệ màu xanh pastel và tương phản với Sidebar màu xanh phiến thạch trầm nhã (`#1e293b`):
+        *   `--bg-sidebar` (Sidebar): `#1e293b` (Deep Slate Slate)
+        *   `--color-emerald` (Màu chủ đạo chính): `#2b6cb0` (Ocean Blue)
+        *   `--color-emerald-glow`: `rgba(43, 108, 176, 0.25)`
+        *   `--color-mint` (Màu điểm nhấn phát sáng): `#60a5fa` (Sky Blue)
+        *   `--color-mint-glow`: `rgba(96, 165, 250, 0.35)`
+        *   `--color-clay` (Xám xanh đá): `#5a6e7f`
+        *   `--color-moss` (Xanh lam đậm): `#1a365d`
+        *   `--color-text-primary` (Xám đen phiến thạch): `#1e293b`
+        *   `--color-text-secondary` (Xám cool slate): `#64748b`
+        *   `--color-sage` (Lam pastel nhạt): `#90cdf4`
+        *   `--glass-border` & `--glass-border-hover`: Đổi từ tông xanh lá sang tông xanh lam nhạt bán trong suốt.
+    *   Cập nhật dải màu chuyển sắc của các hạt trôi nổi `.particle` sang tông màu xanh da trời nhạt/trắng.
+    *   Điều chỉnh các hạt phát sáng `.glow-orb` sang hệ màu xanh pastel và tím lavender nhạt.
+    *   Đảm bảo các thành phần gradient khác (như logo `.brand-logo`, các nút bấm `.btn-primary-forest` / `.btn-export` và status card `.sidebar-status-card`) được chuyển đổi đồng bộ sang hệ màu xanh dương mới.
+
+### R3. Thiết kế lại trực quan Biểu đồ Cột GP% (`gpChart`)
+*   **assets/js/charts.js (`renderGPChart`):**
+    *   Bổ sung thuộc tính `skipNull: true` trên từng dataset để Chart.js tự động ẩn các khoảng trống của các tag có giá trị bằng 0 trong cùng phân khúc.
+    *   Cập nhật logic ánh xạ dữ liệu: Trả về `null` thay vì `0` khi không có đơn hàng nào thuộc tag đó trong nhóm GP% để kích hoạt tính năng `skipNull` hoạt động chính xác.
+    *   Thiết lập kích thước cột cân đối trong Chart options: cấu hình `categoryPercentage: 0.85`, `barPercentage: 0.8`, và `maxBarThickness: 28` để cột đơn lẻ tự động giãn rộng và nằm chính giữa đẹp mắt.
+    *   Cập nhật hệ màu hiển thị trong `TAG_COLORS` và tooltip để đồng bộ với tông màu mới nhưng vẫn đảm bảo sự tương phản rõ ràng giữa các nhóm Tag:
+        *   *Nội thất rời:* Xanh dương (`#2b6cb0`, `rgba(43, 108, 176, 0.4)`)
+        *   *Giấy dán tường:* Cam pastel (`#f6ad55`, `rgba(246, 173, 85, 0.4)`)
+        *   *Rèm:* Xanh ngọc thanh lịch (`#319795`, `rgba(49, 151, 149, 0.4)`)
+        *   *Vải nội thất:* Tím lavender (`#9f7aea`, `rgba(159, 122, 234, 0.4)`)
+
+### R4. Đảm bảo tính toàn vẹn và Kiểm thử
+*   Chạy kiểm thử `pytest` để đảm bảo toàn bộ logic backend hoạt động bình thường, không gây ảnh hưởng đến logic tính toán GP và phân bổ chi phí analytic.
+*   Ứng dụng nạp thành công trên trình duyệt mà không phát sinh bất kỳ cảnh báo hoặc lỗi JS nào trong Console của trình duyệt.
+
+## Acceptance Criteria
+
+### Giao diện & Trực quan (Pastel Blue Theme)
+- [ ] Ảnh nền `bg.png` được loại bỏ hoàn toàn khỏi body, thay bằng dải màu gradient lam sáng `#f0f4f8` đến `#e6ecf2`.
+- [ ] Sidebar đổi màu phiến thạch đậm `#1e293b`. Các biểu tượng, chữ, và nút đồng bộ màu lam.
+- [ ] Hiệu ứng quả cầu `.glow-orb` đổi sang hệ xanh pastel và tím lavender nhạt, hạt `.particle` đổi sang màu lam nhạt/trắng.
+
+### Phạm vi hiển thị đa công ty (Default "All")
+- [ ] Mặc định khi tải trang, dropdown chọn công ty hiển thị "Tất cả công ty" (all) và thanh chỉ báo Scope bar hiển thị "Tất cả công ty" (all).
+- [ ] Khi chọn "Tất cả công ty", tổng số dự án và các chỉ số KPI doanh thu/chi phí hiển thị đầy đủ tổng cộng của cả Bonario và Ordinaire.
+- [ ] Dropdown chọn công ty cho phép chuyển đổi mượt mà sang "Bonario" hoặc "Ordinaire" và cập nhật đúng số liệu riêng của từng công ty.
+
+### Biểu đồ GP% nâng cao (Advanced Charts)
+- [ ] Biểu đồ cột GP% tự động ẩn các khoảng trống thừa (nhờ `skipNull: true` và ánh xạ giá trị `null`).
+- [ ] Cột đơn lẻ trong dải tự động giãn rộng và nằm chính giữa đẹp mắt nhờ cấu hình tỷ lệ cột (`maxBarThickness: 28`).
+- [ ] Các tag hiển thị đúng màu mới trong `TAG_COLORS` ở cả biểu đồ Bar chart và biểu đồ tròn Doughnut chart.
+
+### Kiểm thử QA
+- [ ] Toàn bộ các bài test `pytest` (bao gồm `tests/test_cost_pipeline.py`) chạy thành công 100%.
+
+
+## Follow-up — 2026-06-01T20:44:40+07:00
+
+Triển khai cơ chế lưu cache nâng cao Stale-While-Revalidate (SWR) cho Bonario ROI Dashboard để người dùng khi truy cập trang web nhận được dữ liệu ngay lập tức (<50ms) từ SQLite Persistent Cache, đồng thời hệ thống tự động kiểm tra và thực hiện cập nhật lại dữ liệu từ Odoo trong nền nếu cache đã cũ mà không bắt người dùng phải chờ đợi.
+
+Working directory: `d:\dashboard-roi-project`
+Integrity mode: `development`
+
+## Requirements
+
+### R1. Tách biệt logic lấy dữ liệu Odoo trong dashboard_service.py
+*   Trích xuất toàn bộ logic kết nối Odoo, ThreadPoolExecutor, tính toán dòng dự án, và tổng hợp thống kê hiện có từ phương thức `build_projects_dashboard` ra một phương thức helper riêng:
+    ```python
+    def _fetch_projects_dashboard_from_odoo(self, date_from: str, company_key: str) -> dict[str, Any]:
+    ```
+*   Đảm bảo logic lấy dữ liệu này hoạt động hoàn hảo và độc lập để phục vụ cho cả luồng gọi đồng bộ lẫn luồng chạy ngầm revalidate.
+
+### R2. Thiết lập Persistent Cache cho toàn bộ payload Dashboard
+*   Sử dụng SQLite `PersistentCache` (`self._db_cache`) có sẵn trong dịch vụ để lưu trữ toàn bộ payload kết quả JSON của Dashboard dưới khóa:
+    `dashboard_payload:{company_key}:{date_from}`
+*   Trước khi lưu cache vào SQLite, tích hợp một trường `cached_at` lưu mốc thời gian dạng float (`time.time()`) bên trong payload để quản lý độ tuổi của dữ liệu.
+
+### R3. Triển khai logic Stale-While-Revalidate (SWR)
+Tại phương thức `build_projects_dashboard`:
+*   **Trường hợp `refresh=True` (Người dùng click "Đồng bộ Odoo"):**
+    *   Xóa cache Odoo cũ (`self._db_cache.clear("profitability:")`) và xóa cache payload SQLite tương ứng.
+    *   Gọi đồng bộ lấy dữ liệu mới từ Odoo bằng helper vừa viết, lưu kết quả (kèm `cached_at`) vào cả SQLite cache và in-memory cache, rồi trả về dữ liệu mới.
+*   **Trường hợp `refresh=False` (Truy cập thông thường hoặc tải trang đầu):**
+    *   **Bước 1:** Kiểm tra in-memory cache (`self._projects_dashboard_cache`). Nếu hợp lệ và chưa hết hạn, trả về ngay lập tức.
+    *   **Bước 2:** Nếu in-memory cache trống hoặc hết hạn, truy vấn SQLite Persistent Cache bằng `self._db_cache.get(db_cache_key)`.
+    *   **Bước 3 (Xử lý Cache Hit):** Nếu SQLite có cache:
+        *   Lưu cache này vào in-memory cache để tối ưu các request tiếp theo trong session.
+        *   Kiểm tra độ tuổi của cache (`age = time.time() - cached_at`).
+        *   **Nếu `age < 300` (dưới 5 phút):** Coi như dữ liệu còn **tươi (Fresh)**, trả về lập tức cho người dùng.
+        *   **Nếu `age >= 300` (trên 5 phút - Stale):** Coi như dữ liệu đã **cũ (Stale)**. **Lập tức trả về dữ liệu cũ này cho người dùng (thời gian phản hồi <50ms, người dùng không phải chờ đợi loading spinner!)**, đồng thời kích hoạt một Thread chạy ngầm (Daemon Thread) thực hiện gọi `_async_update_projects_dashboard` để nạp dữ liệu mới từ Odoo ngầm và ghi đè lại cache SQLite + in-memory.
+    *   **Bước 4 (Xử lý Cache Miss):** Nếu SQLite hoàn toàn chưa có cache:
+        *   Gọi đồng bộ lấy dữ liệu từ Odoo, lưu vào cả hai cache, rồi trả về.
+
+### R4. Viết hàm chạy ngầm an toàn
+*   Phương thức chạy ngầm nạp lại dữ liệu:
+    ```python
+    def _async_update_projects_dashboard(self, date_from: str, company_key: str, cache_key: str, db_cache_key: str) -> None:
+    ```
+    phải được bao bọc hoàn toàn bằng khối `try-except` để tránh việc luồng chạy ngầm gặp lỗi làm sập máy chủ Flask.
+*   Khi chạy thành công, tự động cập nhật cả Persistent Cache (SQLite) và Memory Cache.
+
+### R5. Viết Unit Tests kiểm thử toàn diện
+*   Bổ sung các hàm test trong `tests/test_cost_pipeline.py` hoặc file test mới để kiểm tra:
+    *   SQLite cache hit dưới 5 phút trả về dữ liệu lập tức.
+    *   SQLite cache hit trên 5 phút trả về dữ liệu lập tức và kích hoạt luồng chạy ngầm (revalidation thread).
+    *   Bypass cache khi `refresh=True`.
+
+## Acceptance Criteria
+
+### Tốc độ tải trang & UX
+- [ ] Khi truy cập trang web (nếu SQLite đã có cache từ lần truy cập trước), giao diện **hoàn tất hiển thị ngay lập tức**, người dùng **không phải chờ đợi** màn hình tải xoay tròn "Đang đồng bộ dữ liệu doanh thu..." nữa.
+- [ ] Thời gian phản hồi API `/api/projects-dashboard` when has cache đạt dưới **50ms**.
+- [ ] Nút "Đồng bộ Odoo" vẫn hoạt động đúng vai trò cưỡng bức đồng bộ thời gian thực (hiển thị loading spinner cho đến khi nạp xong).
+
+### Tính toàn vẹn của dữ liệu và luồng ngầm
+- [ ] Khi dữ liệu cũ (stale) được trả về, luồng chạy ngầm tự động kích hoạt và cập nhật thành công SQLite cache mà không gây cản trở hay tạo lỗi trên giao diện người dùng.
+- [ ] Khởi chạy lại dự án và vượt qua toàn bộ các bài test `pytest` thành công 100%.
+
+## Follow-up — 2026-06-01T21:33:27+07:00
+
+Thực hiện cải tiến toàn diện Frontend, điều chỉnh layout và sửa các lỗi giao diện còn tồn đọng trên Bonario ROI Dashboard nhằm tối ưu hóa trực quan, mang lại giao diện Soft Coastal Pastel Blue đồng bộ, mượt mà và cao cấp nhất.
+
+Working directory: `d:\dashboard-roi-project`
+Integrity mode: `development`
+
+## Requirements
+
+### R1. Đồng bộ hệ màu Coastal Blue cho toàn bộ hiệu ứng Loading & Overlay
+*   **Vấn đề**: Khi nạp dữ liệu ban đầu hoặc click "Đồng bộ Odoo", hệ thống đang hiển thị vòng xoay loading overlay với màu sắc xanh lá cây cũ (`#107850` và `#0c2317`), không ăn khớp với tông Coastal Blue hiện tại.
+*   **Giải pháp**:
+    *   Cập nhật hàm `loadDashboard` trong [app.js](file:///d:/dashboard-roi-project/app.js) và hàm `showLoadingOverlay` trong [utils.js](file:///d:/dashboard-roi-project/assets/js/utils.js).
+    *   Thay thế toàn bộ mã màu xanh lá cây cũ bằng tông màu xanh lam của hệ màu mới (`#2b6cb0` cho viền spinner chính, và màu text `#1e293b`).
+    *   Tối ưu hóa backdrop-filter làm mờ nền nhẹ (`backdrop-filter: blur(4px)`) và màu nền bán trong suốt sang trọng (`rgba(240, 244, 248, 0.75)`).
+
+### R2. Tối ưu hóa khoảng cách và thiết kế Empty State cho bảng dự án
+*   **Vấn đề**: Giao diện khi bộ lọc không trả về kết quả (Empty State) hiện tại hiển thị emoji `📭` đơn giản, chưa tương xứng với độ cao cấp của dashboard.
+*   **Giải pháp**:
+    *   Chỉnh sửa hàm `renderProjectsTable` trong [table.js](file:///d:/dashboard-roi-project/assets/js/components/table.js).
+    *   Thiết kế lại vùng hiển thị trống: sử dụng biểu tượng SVG tinh tế hoặc icon FontAwesome lớn phát sáng mờ (`fa-folder-open` hoặc `fa-inbox`), đi kèm thông điệp hướng dẫn rõ ràng, căn chỉnh padding và margin hợp lý.
+    *   Đảm bảo nút "✕ Xóa bộ lọc" (`clearFiltersBtn`) chèn động có CSS riêng trong [styles.css](file:///d:/dashboard-roi-project/styles.css) để nút này luôn nằm thẳng hàng, không bị lệch hoặc méo layout trên các kích thước màn hình.
+
+### R3. Hiệu ứng chuyển cảnh và tương tác mượt mà (Micro-animations)
+*   **Giải pháp**:
+    *   Cập nhật [styles.css](file:///d:/dashboard-roi-project/styles.css) để bổ sung hiệu ứng mờ dần và trượt nhẹ (`fade-in-up`) khi vẽ lại các hàng của bảng danh sách (`#projectsTable tr`), giúp trải nghiệm đổi trang hoặc đổi bộ lọc có cảm giác mượt mà và phản hồi nhanh.
+    *   Thêm hover hiệu ứng phát sáng nhẹ cho các KPI cards và các thẻ Scope bar để tăng tính sinh động.
+
+### R4. Đảm bảo tính toàn vẹn và Kiểm thử
+*   Đảm bảo toàn bộ ứng dụng nạp thành công trên trình duyệt mà không phát sinh bất kỳ cảnh báo hoặc lỗi JS nào trong Console.
+*   Chạy lại bộ unit tests và stress tests thành công 100%.
+
+## Acceptance Criteria
+
+### Hệ màu Loading & Overlay đồng bộ
+- [ ] Vòng xoay Loading khi tải trang hoặc đồng bộ hiển thị chuẩn tông màu xanh lam Coastal Blue (`#2b6cb0` hoặc `--color-emerald`), không còn màu xanh lá cũ.
+- [ ] Chữ thông báo và nền overlay sử dụng đúng hệ màu đen xám phiến thạch (`#1e293b` hoặc `--color-text-primary`) trên nền kính mờ lam nhạt.
+
+### Thiết kế Empty State & Layout Table
+- [ ] Khi bộ lọc trả về 0 kết quả, bảng hiển thị vùng trống được thiết kế đẹp mắt, cân đối và chuyên nghiệp.
+- [ ] Nút "✕ Xóa bộ lọc" hiển thị thẳng hàng, cân xứng trong vùng Table Filters.
+- [ ] Số lượng dự án và định dạng tiền tệ trong toàn bộ bảng không bị lỗi ngắt dòng hay rớt chữ "đ".
+
+### Trải nghiệm tương tác & Tests
+- [ ] Các hàng của bảng trượt mờ dần nhẹ nhàng khi chuyển trang hoặc áp dụng bộ lọc mới.
+- [ ] Chạy bộ kiểm thử tự động `pytest` thành công 100% (23/23 tests pass).
+- [ ] Chạy bộ stress test JS thành công 100% (12/12 assertions pass).
+

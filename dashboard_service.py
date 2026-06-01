@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import time
+import threading
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
@@ -53,6 +55,7 @@ MATERIAL_LOGISTICS_KEYWORDS = (
     "giao",
 )
 COMPANY_SCOPES = {
+    "all": {"label": "Tất cả công ty", "aliases": ("all", "tat ca", "tatca")},
     "bonario": {"label": "Bonario", "aliases": ("bonario",)},
     "ordinaire": {"label": "Ordinaire", "aliases": ("ordinaire",)},
 }
@@ -90,39 +93,14 @@ class DashboardService:
         self.client = client
         self._projects_dashboard_cache: dict[str, tuple[float, dict[str, Any]]] = {}
         self._cache_lock = Lock()
-        self._db_cache = PersistentCache()
+        self._db_cache = PersistentCache(ttl=86400 * 30)
+        self._active_updates: set[str] = set()
+        self._active_updates_lock = Lock()
 
     def test_connection(self) -> dict[str, Any]:
         return self.client.test_connection()
 
-    def build_projects_dashboard(
-        self,
-        date_from: str = "2026-01-01",
-        *,
-        company: str = "bonario",
-        refresh: bool = False,
-    ) -> dict[str, Any]:
-        date_from = self._normalize_date_from(date_from)
-        company_key = self._normalize_company_key(company)
-        cache_key = f"{company_key}:{date_from}"
-        if refresh:
-            self._db_cache.clear("profitability:")
-            logger.info("Cleared profitability cache for refresh")
-        if not refresh:
-            with self._cache_lock:
-                cached = self._projects_dashboard_cache.get(cache_key)
-                if cached and monotonic() - cached[0] < PROJECTS_DASHBOARD_TTL_SECONDS:
-                    return cached[1]
-
-        if refresh:
-            self._db_cache.clear("profitability:")
-            logger.info("Cleared profitability cache for refresh")
-        if not refresh:
-            with self._cache_lock:
-                cached = self._projects_dashboard_cache.get(cache_key)
-                if cached and monotonic() - cached[0] < PROJECTS_DASHBOARD_TTL_SECONDS:
-                    return cached[1]
-
+    def _fetch_projects_dashboard_from_odoo(self, date_from: str, company_key: str) -> dict[str, Any]:
         sale_orders = self._get_dashboard_sale_orders(date_from, company_key)
         sale_order_ids = [order["id"] for order in sale_orders]
         sale_orders_by_id = {order["id"]: order for order in sale_orders}
@@ -131,8 +109,26 @@ class DashboardService:
         # Filter: chỉ giữ sale orders có ít nhất 1 tag trong target tags
         filtered_so_ids = [so_id for so_id, tags in tag_map.items() if tags]
         if not filtered_so_ids:
-            # Không có SO nào match tags
-            return self._build_empty_dashboard(date_from, company_key)
+            # Không có SO nào match tags - build empty dashboard payload directly
+            return {
+                "projects": [],
+                "summary": {
+                    "total_projects": 0,
+                    "valid_project_count": 0,
+                    "total_bg_untaxed": 0,
+                    "total_native_expected_cost": 0,
+                    "total_adjusted_expected_cost": 0,
+                    "total_cost_adjustment_amount": 0,
+                    "total_gp_amount": 0,
+                    "weighted_gp_percent": 0,
+                },
+                "tag_buckets": {},
+                "tag_gp_ranks": {},
+                "meta": self._build_projects_dashboard_meta([], [], date_from, company_key),
+                "date_from": date_from,
+                "company": self._company_payload(company_key),
+                "fetched_at": datetime.now(timezone.utc).isoformat(),
+            }
         
         projects = self._get_projects_for_sale_orders(filtered_so_ids)
         sale_orders_by_id = {so_id: sale_orders_by_id[so_id] for so_id in filtered_so_ids if so_id in sale_orders_by_id}
@@ -176,7 +172,7 @@ class DashboardService:
         # If a row has no company_key, include it to preserve compatibility
         filtered_rows = [
             row for row in rows
-            if not row.get("company_key") or row.get("company_key") == company_key
+            if company_key == "all" or not row.get("company_key") or row.get("company_key") == company_key
         ]
         filtered_done_rows = [row for row in filtered_rows if row.get("order_state") == "Done"]
         
@@ -190,12 +186,110 @@ class DashboardService:
             "company": self._company_payload(company_key),
             "fetched_at": datetime.now(timezone.utc).isoformat(),
         }
+        return payload
 
+    def _async_update_projects_dashboard(
+        self,
+        date_from: str,
+        company_key: str,
+        cache_key: str,
+        db_cache_key: str,
+    ) -> None:
+        try:
+            logger.info(f"Starting background cache revalidation for {cache_key}")
+            payload = self._fetch_projects_dashboard_from_odoo(date_from, company_key)
+            payload["cached_at"] = time.time()
+            
+            # Write to SQLite Persistent Cache
+            self._db_cache.set(db_cache_key, payload)
+            
+            # Write to In-Memory Cache
+            with self._cache_lock:
+                self._projects_dashboard_cache[cache_key] = (monotonic(), payload)
+                
+            logger.info(f"Background cache revalidation completed successfully for {cache_key}")
+        except Exception as e:
+            logger.error(f"Error in background revalidation thread for {cache_key}: {e}", exc_info=True)
+        finally:
+            with self._active_updates_lock:
+                self._active_updates.discard(cache_key)
+
+    def build_projects_dashboard(
+        self,
+        date_from: str = "2026-01-01",
+        *,
+        company: str = "all",
+        refresh: bool = False,
+    ) -> dict[str, Any]:
+        date_from = self._normalize_date_from(date_from)
+        company_key = self._normalize_company_key(company)
+        cache_key = f"{company_key}:{date_from}"
+        db_cache_key = f"dashboard_payload:{company_key}:{date_from}"
+
+        # If refresh=True: clear caches, fetch synchronously from Odoo, cache, and return
+        if refresh:
+            self._db_cache.clear("profitability:")
+            self._db_cache.clear(db_cache_key)
+            with self._cache_lock:
+                self._projects_dashboard_cache.pop(cache_key, None)
+            
+            logger.info(f"Forced refresh: cleared caches for {cache_key}")
+            payload = self._fetch_projects_dashboard_from_odoo(date_from, company_key)
+            payload["cached_at"] = time.time()
+            
+            self._db_cache.set(db_cache_key, payload)
+            with self._cache_lock:
+                self._projects_dashboard_cache[cache_key] = (monotonic(), payload)
+            return payload
+
+        # If refresh=False:
+        # 1. Check in-memory cache
+        with self._cache_lock:
+            cached = self._projects_dashboard_cache.get(cache_key)
+            if cached and monotonic() - cached[0] < PROJECTS_DASHBOARD_TTL_SECONDS:
+                logger.debug(f"Memory cache hit for {cache_key}")
+                return cached[1]
+
+        # 2. Check SQLite cache
+        db_cached = self._db_cache.get(db_cache_key)
+        if db_cached is not None:
+            cached_at = db_cached.get("cached_at")
+            if cached_at is not None:
+                age = time.time() - cached_at
+                
+                # Save to memory cache, preserving age
+                with self._cache_lock:
+                    self._projects_dashboard_cache[cache_key] = (monotonic() - age, db_cached)
+                
+                # If fresh (< 5 minutes), return immediately
+                if age < 300:
+                    logger.info(f"SQLite cache hit & fresh (age: {age:.1f}s) for {cache_key}")
+                    return db_cached
+                
+                # Stale (>= 5 minutes): return stale instantly, and spawn background revalidation thread
+                logger.info(f"SQLite cache hit but stale (age: {age:.1f}s) for {cache_key}. Triggering revalidation.")
+                with self._active_updates_lock:
+                    if cache_key not in self._active_updates:
+                        self._active_updates.add(cache_key)
+                        t = threading.Thread(
+                            target=self._async_update_projects_dashboard,
+                            args=(date_from, company_key, cache_key, db_cache_key),
+                            daemon=True
+                        )
+                        t.start()
+                return db_cached
+
+        # 3. SQLite cache miss: fetch synchronously from Odoo
+        logger.info(f"SQLite cache miss for {cache_key}. Fetching synchronously from Odoo.")
+        payload = self._fetch_projects_dashboard_from_odoo(date_from, company_key)
+        payload["cached_at"] = time.time()
+        
+        self._db_cache.set(db_cache_key, payload)
         with self._cache_lock:
             self._projects_dashboard_cache[cache_key] = (monotonic(), payload)
         return payload
 
-    def _build_empty_dashboard(self, date_from: str, company_key: str = "bonario") -> dict[str, Any]:
+    def _build_empty_dashboard(self, date_from: str, company_key: str = "all") -> dict[str, Any]:
         payload = {
             "projects": [],
             "summary": {
@@ -230,7 +324,7 @@ class DashboardService:
             ) from exc
 
     def _normalize_company_key(self, company: str | None) -> str:
-        normalized = normalized_text(company or "bonario").strip()
+        normalized = normalized_text(company or "all").strip()
         for key, scope in COMPANY_SCOPES.items():
             if normalized == key or normalized in scope["aliases"]:
                 return key

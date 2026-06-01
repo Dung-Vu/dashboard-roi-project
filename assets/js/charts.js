@@ -3,13 +3,13 @@ import { formatVND, formatPercent } from './utils.js';
 import { applyFilters } from './components/table.js';
 
 const TAG_COLORS = {
-    "Nội thất rời": { border: '#107850', start: 'rgba(16, 120, 80, 0.4)', end: 'rgba(16, 120, 80, 0.02)' },
-    "Giấy dán tường": { border: '#d97706', start: 'rgba(217, 119, 6, 0.4)', end: 'rgba(217, 119, 6, 0.02)' },
-    "Rèm": { border: '#0284c7', start: 'rgba(2, 132, 199, 0.4)', end: 'rgba(2, 132, 199, 0.02)' },
-    "Vải nội thất": { border: '#701a75', start: 'rgba(112, 26, 117, 0.4)', end: 'rgba(112, 26, 117, 0.02)' }
+    "Nội thất rời": { border: '#2b6cb0', start: 'rgba(43, 108, 176, 0.4)', end: 'rgba(43, 108, 176, 0.02)' },
+    "Giấy dán tường": { border: '#ed8936', start: 'rgba(237, 137, 54, 0.4)', end: 'rgba(237, 137, 54, 0.02)' },
+    "Rèm": { border: '#4299e1', start: 'rgba(66, 153, 225, 0.4)', end: 'rgba(66, 153, 225, 0.02)' },
+    "Vải nội thất": { border: '#9f7aea', start: 'rgba(159, 122, 234, 0.4)', end: 'rgba(159, 122, 234, 0.02)' }
 };
 
-const DEFAULT_COLOR = { border: '#a3b899', start: 'rgba(163, 184, 153, 0.4)', end: 'rgba(163, 184, 153, 0.02)' };
+const DEFAULT_COLOR = { border: '#cbd5e0', start: 'rgba(203, 213, 224, 0.4)', end: 'rgba(203, 213, 224, 0.02)' };
 
 export function renderKPISparklines(projects) {
     document.querySelectorAll('.kpi-card').forEach(card => {
@@ -48,12 +48,12 @@ export function renderKPISparklines(projects) {
             <svg class="kpi-sparkline" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none">
                 <defs>
                     <linearGradient id="${gradId}" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stop-color="#107850" stop-opacity="0.28" />
-                        <stop offset="100%" stop-color="#557361" stop-opacity="0.02" />
+                        <stop offset="0%" stop-color="var(--color-emerald, #2b6cb0)" stop-opacity="0.28" />
+                        <stop offset="100%" stop-color="var(--color-text-secondary, #64748b)" stop-opacity="0.02" />
                     </linearGradient>
                 </defs>
                 <path d="${fillD}" fill="url(#${gradId})" />
-                <path d="${pathD}" fill="none" stroke="#107850" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                <path d="${pathD}" fill="none" stroke="var(--color-emerald, #2b6cb0)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
             </svg>
         `;
         card.style.position = 'relative';
@@ -74,6 +74,8 @@ export function renderGPChart(tagGPRanks) {
     const style = getComputedStyle(document.documentElement);
     const textColorPrimary = style.getPropertyValue('--color-text-primary').trim() || '#0c2317';
     const textColorSecondary = style.getPropertyValue('--color-text-secondary').trim() || '#557361';
+    const colorMint = style.getPropertyValue('--color-mint').trim() || '#60a5fa';
+    const colorEmerald = style.getPropertyValue('--color-emerald').trim() || '#2b6cb0';
 
     const tags = Object.keys(tagGPRanks);
     const allRanges = new Set();
@@ -98,7 +100,12 @@ export function renderGPChart(tagGPRanks) {
 
         return {
             label: tag,
-            data: sortedRanges.map(range => rankMap[range] || 0),
+            data: sortedRanges.map(range => rankMap[range] ? rankMap[range] : null),
+            skipNull: false,
+            categoryPercentage: 0.85,
+            barPercentage: 0.9,
+            maxBarThickness: 32,
+            minBarLength: 10,
             backgroundColor: function(context) {
                 const chart = context.chart;
                 const {ctx: chartCtx, chartArea} = chart;
@@ -112,7 +119,7 @@ export function renderGPChart(tagGPRanks) {
                 return gradient;
             },
             borderColor: themeColor.border,
-            borderWidth: 1.5,
+            borderWidth: 2,
             borderRadius: 2,
             borderSkipped: false,
             hoverBackgroundColor: themeColor.border
@@ -142,12 +149,17 @@ export function renderGPChart(tagGPRanks) {
                     if (tagFilter) {
                         tagFilter.value = tag;
                     }
+                    const stateFilter = document.getElementById('stateFilter');
+                    if (stateFilter) {
+                        stateFilter.value = 'Done';
+                    }
                     state.pendingUIState.tag = tag;
+                    state.pendingUIState.order_state = 'Done';
                     state.gpRangeFilter = range;
 
                     applyFilters();
 
-                    window.location.hash = '#/projects';
+                    location.hash = '#/projects';
                 }
             },
             onHover: (event, chartElement) => {
@@ -171,10 +183,10 @@ export function renderGPChart(tagGPRanks) {
                     }
                 },
                 tooltip: {
-                    backgroundColor: 'rgba(12, 35, 23, 0.95)',
+                    backgroundColor: 'rgba(30, 41, 59, 0.95)',
                     titleColor: '#f4f7f5',
-                    bodyColor: '#a7f3d0',
-                    borderColor: 'var(--color-emerald)',
+                    bodyColor: colorMint,
+                    borderColor: colorEmerald,
                     borderWidth: 1,
                     padding: 10,
                     boxPadding: 5,
@@ -252,7 +264,7 @@ export function renderRevenueDoughnut(tagBuckets) {
                     }
                 },
                 tooltip: {
-                    backgroundColor: 'rgba(12, 35, 23, 0.95)',
+                    backgroundColor: 'rgba(30, 41, 59, 0.95)',
                     callbacks: {
                         label: function(context) {
                             const value = context.raw;

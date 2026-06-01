@@ -160,7 +160,7 @@ export function renderTagLeaderboard(tagBuckets) {
 
             applyFilters();
 
-            window.location.hash = '#/projects';
+            location.hash = '#/projects';
         });
 
         fragment.appendChild(div);

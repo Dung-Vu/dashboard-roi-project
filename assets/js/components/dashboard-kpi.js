@@ -47,13 +47,50 @@ export function getDashboardMeta() {
 export function renderScopeBar() {
     const meta = getDashboardMeta();
     const counts = meta.counts || {};
+    
     const setText = (id, value) => {
         const el = document.getElementById(id);
         if (el) el.textContent = value;
     };
-    setText('scopeListCount', counts.list_projects ?? (state.dashboardData?.projects || []).length);
-    setText('scopeDoneCount', counts.done_projects ?? state.dashboardData?.summary?.total_projects ?? 0);
-    setText('scopeValidDoneCount', counts.valid_done_projects ?? state.dashboardData?.summary?.valid_project_count ?? 0);
-    setText('scopeDateFrom', meta.date_from || state.dashboardData?.date_from || DEFAULT_DATE_FROM);
-    setText('scopeCompany', meta.company?.label || state.dashboardData?.company?.label || '-');
+    
+    const listCount = counts.list_projects ?? (state.dashboardData?.projects || []).length ?? 0;
+    const doneCount = counts.done_projects ?? state.dashboardData?.summary?.total_projects ?? 0;
+    const validCount = counts.valid_done_projects ?? state.dashboardData?.summary?.valid_project_count ?? 0;
+    
+    setText('scopeListCount', listCount);
+    setText('scopeDoneCount', doneCount);
+    setText('scopeValidDoneCount', validCount);
+    
+    const dateFromStr = meta.date_from || state.dashboardData?.date_from || DEFAULT_DATE_FROM;
+    setText('scopeDateFrom', dateFromStr);
+
+    // 1. Tính % KPI Hoàn tất
+    const doneBadge = document.getElementById('scopeDoneBadge');
+    if (doneBadge) {
+        const percent = listCount > 0 ? ((doneCount / listCount) * 100).toFixed(1) : '0.0';
+        doneBadge.textContent = `${percent}%`;
+    }
+
+    // 2. Tính % Valid BG > 0
+    const validBadge = document.getElementById('scopeValidBadge');
+    if (validBadge) {
+        const percent = doneCount > 0 ? ((validCount / doneCount) * 100).toFixed(1) : '0.0';
+        validBadge.textContent = `${percent}%`;
+    }
+
+    // 3. Tính số ngày từ ngày báo giá đã chọn đến hôm nay
+    const daysBadge = document.getElementById('scopeDaysBadge');
+    if (daysBadge) {
+        try {
+            const startDate = new Date(dateFromStr);
+            const today = new Date();
+            startDate.setHours(0,0,0,0);
+            today.setHours(0,0,0,0);
+            const diffTime = Math.max(0, today - startDate);
+            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+            daysBadge.textContent = `${diffDays} ngày qua`;
+        } catch (e) {
+            daysBadge.textContent = '- ngày qua';
+        }
+    }
 }

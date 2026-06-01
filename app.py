@@ -88,7 +88,7 @@ def create_app() -> Flask:
     @app.get("/api/projects-dashboard")
     def projects_dashboard():
         date_from = request.args.get("date_from", default="2026-01-01", type=str)
-        company = request.args.get("company", default="bonario", type=str)
+        company = request.args.get("company", default="all", type=str)
         refresh = request.args.get("refresh", default="0") == "1"
         payload = service.build_projects_dashboard(date_from, company=company, refresh=refresh)
         return jsonify(payload)

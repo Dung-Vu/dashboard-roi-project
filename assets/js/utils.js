@@ -11,22 +11,22 @@ export function escapeHTML(str) {
 }
 
 export function formatVND(amount) {
-    if (amount === null || amount === undefined || isNaN(amount)) return '0 ₫';
+    if (amount === null || amount === undefined || isNaN(amount)) return '0\u00a0₫';
     if (amount >= 1e9) {
-        return (amount / 1e9).toFixed(1) + ' tỷ';
+        return (amount / 1e9).toFixed(1) + '\u00a0tỷ';
     }
     if (amount >= 1e6) {
-        return (amount / 1e6).toFixed(1) + ' tr';
+        return (amount / 1e6).toFixed(1) + '\u00a0tr';
     }
     if (amount >= 1e3) {
-        return (amount / 1e3).toFixed(1) + ' k';
+        return (amount / 1e3).toFixed(1) + '\u00a0k';
     }
-    return amount.toFixed(0) + ' ₫';
+    return amount.toFixed(0) + '\u00a0₫';
 }
 
 export function formatFullVND(amount) {
-    if (amount === null || amount === undefined || isNaN(amount)) return '0 ₫';
-    return new Intl.NumberFormat('vi-VN').format(amount) + ' ₫';
+    if (amount === null || amount === undefined || isNaN(amount)) return '0\u00a0₫';
+    return new Intl.NumberFormat('vi-VN').format(amount) + '\u00a0₫';
 }
 
 export function formatPercent(value) {
@@ -71,8 +71,8 @@ export function showLoadingOverlay() {
     if (!overlay) {
         overlay = document.createElement('div');
         overlay.id = 'refreshOverlay';
-        overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(255,255,255,0.75);display:flex;align-items:center;justify-content:center;z-index:9999;backdrop-filter:blur(2px);';
-        overlay.innerHTML = '<div style="text-align:center;"><div style="width:48px;height:48px;border:4px solid #107850;border-top-color:transparent;border-radius:50%;animation:spin 0.8s linear infinite;margin:0 auto 12px;"></div><p style="font-family:var(--font-heading);font-weight:600;color:#0c2317;">Đang tải dữ liệu...</p></div>';
+        overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(240, 244, 248, 0.75);display:flex;align-items:center;justify-content:center;z-index:9999;backdrop-filter:blur(4px);';
+        overlay.innerHTML = '<div style="text-align:center;"><div style="width:48px;height:48px;border:4px solid #2b6cb0;border-top-color:transparent;border-radius:50%;animation:spin 0.8s linear infinite;margin:0 auto 12px;filter:drop-shadow(0 0 8px rgba(43, 108, 176, 0.3));"></div><p style="font-family:var(--font-heading);font-weight:600;color:#1e293b;">Đang tải dữ liệu...</p></div>';
         const styleEl = document.createElement('style');
         styleEl.textContent = '@keyframes spin{to{transform:rotate(360deg)}}';
         document.head.appendChild(styleEl);

@@ -2,8 +2,9 @@
 // --- MODULE: assets/js/config.js ---
 const API_BASE = '';
 const DEFAULT_DATE_FROM = '2026-01-01';
-const DEFAULT_COMPANY = 'bonario';
+const DEFAULT_COMPANY = 'all';
 const COMPANY_OPTIONS = [
+    { key: 'all', label: 'Tất cả công ty' },
     { key: 'bonario', label: 'Bonario' },
     { key: 'ordinaire', label: 'Ordinaire' },
 ];
@@ -49,49 +50,23 @@ function escapeHTML(str) {
         .replace(/'/g, '&#039;');
 }
 
-function isGPInInterval(gp_percent, intervalLabel) {
-    if (gp_percent === null || gp_percent === undefined) return false;
-    
-    // Sử dụng Math.trunc để tương thích với logic int() của Python
-    const valTrunc = Math.trunc(gp_percent);
-
-    if (intervalLabel === "<0%") {
-        return valTrunc < 0;
-    }
-    if (intervalLabel === "0-20%") {
-        return valTrunc >= 0 && valTrunc <= 20;
-    }
-    if (intervalLabel === "21-40%") {
-        return valTrunc >= 21 && valTrunc <= 40;
-    }
-    
-    // So khớp dải dạng "X-Y%"
-    const match = intervalLabel.match(/^(\d+)-(\d+)%$/);
-    if (match) {
-        const start = parseInt(match[1], 10);
-        const end = parseInt(match[2], 10);
-        return valTrunc >= start && valTrunc <= end;
-    }
-    return false;
-}
-
 function formatVND(amount) {
-    if (amount === null || amount === undefined || isNaN(amount)) return '0 ₫';
+    if (amount === null || amount === undefined || isNaN(amount)) return '0\u00a0₫';
     if (amount >= 1e9) {
-        return (amount / 1e9).toFixed(1) + ' tỷ';
+        return (amount / 1e9).toFixed(1) + '\u00a0tỷ';
     }
     if (amount >= 1e6) {
-        return (amount / 1e6).toFixed(1) + ' tr';
+        return (amount / 1e6).toFixed(1) + '\u00a0tr';
     }
     if (amount >= 1e3) {
-        return (amount / 1e3).toFixed(1) + ' k';
+        return (amount / 1e3).toFixed(1) + '\u00a0k';
     }
-    return amount.toFixed(0) + ' ₫';
+    return amount.toFixed(0) + '\u00a0₫';
 }
 
 function formatFullVND(amount) {
-    if (amount === null || amount === undefined || isNaN(amount)) return '0 ₫';
-    return new Intl.NumberFormat('vi-VN').format(amount) + ' ₫';
+    if (amount === null || amount === undefined || isNaN(amount)) return '0\u00a0₫';
+    return new Intl.NumberFormat('vi-VN').format(amount) + '\u00a0₫';
 }
 
 function formatPercent(value) {
@@ -136,8 +111,8 @@ function showLoadingOverlay() {
     if (!overlay) {
         overlay = document.createElement('div');
         overlay.id = 'refreshOverlay';
-        overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(255,255,255,0.75);display:flex;align-items:center;justify-content:center;z-index:9999;backdrop-filter:blur(2px);';
-        overlay.innerHTML = '<div style="text-align:center;"><div style="width:48px;height:48px;border:4px solid #107850;border-top-color:transparent;border-radius:50%;animation:spin 0.8s linear infinite;margin:0 auto 12px;"></div><p style="font-family:var(--font-heading);font-weight:600;color:#0c2317;">Đang tải dữ liệu...</p></div>';
+        overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(240, 244, 248, 0.75);display:flex;align-items:center;justify-content:center;z-index:9999;backdrop-filter:blur(4px);';
+        overlay.innerHTML = '<div style="text-align:center;"><div style="width:48px;height:48px;border:4px solid #2b6cb0;border-top-color:transparent;border-radius:50%;animation:spin 0.8s linear infinite;margin:0 auto 12px;filter:drop-shadow(0 0 8px rgba(43, 108, 176, 0.3));"></div><p style="font-family:var(--font-heading);font-weight:600;color:#1e293b;">Đang tải dữ liệu...</p></div>';
         const styleEl = document.createElement('style');
         styleEl.textContent = '@keyframes spin{to{transform:rotate(360deg)}}';
         document.head.appendChild(styleEl);
@@ -160,6 +135,33 @@ function scrollToTableTop() {
         table.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 }
+
+function isGPInInterval(gp_percent, intervalLabel) {
+    if (gp_percent === null || gp_percent === undefined) return false;
+    
+    // Sử dụng Math.trunc để tương thích với logic int() của Python
+    const valTrunc = Math.trunc(gp_percent);
+
+    if (intervalLabel === "<0%") {
+        return valTrunc < 0;
+    }
+    if (intervalLabel === "0-20%") {
+        return valTrunc >= 0 && valTrunc <= 20;
+    }
+    if (intervalLabel === "21-40%") {
+        return valTrunc >= 21 && valTrunc <= 40;
+    }
+    
+    // So khớp dải dạng "X-Y%"
+    const match = intervalLabel.match(/^(\d+)-(\d+)%$/);
+    if (match) {
+        const start = parseInt(match[1], 10);
+        const end = parseInt(match[2], 10);
+        return valTrunc >= start && valTrunc <= end;
+    }
+    return false;
+}
+
 
 // --- MODULE: assets/js/state.js ---
 
@@ -286,14 +288,15 @@ async function fetchDashboard(dateFrom, company = 'bonario', refresh = false) {
 
 
 
+
 const TAG_COLORS = {
-    "Nội thất rời": { border: '#107850', start: 'rgba(16, 120, 80, 0.4)', end: 'rgba(16, 120, 80, 0.02)' },
-    "Giấy dán tường": { border: '#d97706', start: 'rgba(217, 119, 6, 0.4)', end: 'rgba(217, 119, 6, 0.02)' },
-    "Rèm": { border: '#0284c7', start: 'rgba(2, 132, 199, 0.4)', end: 'rgba(2, 132, 199, 0.02)' },
-    "Vải nội thất": { border: '#701a75', start: 'rgba(112, 26, 117, 0.4)', end: 'rgba(112, 26, 117, 0.02)' }
+    "Nội thất rời": { border: '#2b6cb0', start: 'rgba(43, 108, 176, 0.4)', end: 'rgba(43, 108, 176, 0.02)' },
+    "Giấy dán tường": { border: '#ed8936', start: 'rgba(237, 137, 54, 0.4)', end: 'rgba(237, 137, 54, 0.02)' },
+    "Rèm": { border: '#4299e1', start: 'rgba(66, 153, 225, 0.4)', end: 'rgba(66, 153, 225, 0.02)' },
+    "Vải nội thất": { border: '#9f7aea', start: 'rgba(159, 122, 234, 0.4)', end: 'rgba(159, 122, 234, 0.02)' }
 };
 
-const DEFAULT_COLOR = { border: '#a3b899', start: 'rgba(163, 184, 153, 0.4)', end: 'rgba(163, 184, 153, 0.02)' };
+const DEFAULT_COLOR = { border: '#cbd5e0', start: 'rgba(203, 213, 224, 0.4)', end: 'rgba(203, 213, 224, 0.02)' };
 
 function renderKPISparklines(projects) {
     document.querySelectorAll('.kpi-card').forEach(card => {
@@ -332,12 +335,12 @@ function renderKPISparklines(projects) {
             <svg class="kpi-sparkline" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none">
                 <defs>
                     <linearGradient id="${gradId}" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stop-color="#107850" stop-opacity="0.28" />
-                        <stop offset="100%" stop-color="#557361" stop-opacity="0.02" />
+                        <stop offset="0%" stop-color="var(--color-emerald, #2b6cb0)" stop-opacity="0.28" />
+                        <stop offset="100%" stop-color="var(--color-text-secondary, #64748b)" stop-opacity="0.02" />
                     </linearGradient>
                 </defs>
                 <path d="${fillD}" fill="url(#${gradId})" />
-                <path d="${pathD}" fill="none" stroke="#107850" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                <path d="${pathD}" fill="none" stroke="var(--color-emerald, #2b6cb0)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
             </svg>
         `;
         card.style.position = 'relative';
@@ -358,6 +361,8 @@ function renderGPChart(tagGPRanks) {
     const style = getComputedStyle(document.documentElement);
     const textColorPrimary = style.getPropertyValue('--color-text-primary').trim() || '#0c2317';
     const textColorSecondary = style.getPropertyValue('--color-text-secondary').trim() || '#557361';
+    const colorMint = style.getPropertyValue('--color-mint').trim() || '#60a5fa';
+    const colorEmerald = style.getPropertyValue('--color-emerald').trim() || '#2b6cb0';
 
     const tags = Object.keys(tagGPRanks);
     const allRanges = new Set();
@@ -382,7 +387,12 @@ function renderGPChart(tagGPRanks) {
 
         return {
             label: tag,
-            data: sortedRanges.map(range => rankMap[range] || 0),
+            data: sortedRanges.map(range => rankMap[range] ? rankMap[range] : null),
+            skipNull: false,
+            categoryPercentage: 0.85,
+            barPercentage: 0.9,
+            maxBarThickness: 32,
+            minBarLength: 10,
             backgroundColor: function(context) {
                 const chart = context.chart;
                 const {ctx: chartCtx, chartArea} = chart;
@@ -396,7 +406,7 @@ function renderGPChart(tagGPRanks) {
                 return gradient;
             },
             borderColor: themeColor.border,
-            borderWidth: 1.5,
+            borderWidth: 2,
             borderRadius: 2,
             borderSkipped: false,
             hoverBackgroundColor: themeColor.border
@@ -426,12 +436,17 @@ function renderGPChart(tagGPRanks) {
                     if (tagFilter) {
                         tagFilter.value = tag;
                     }
+                    const stateFilter = document.getElementById('stateFilter');
+                    if (stateFilter) {
+                        stateFilter.value = 'Done';
+                    }
                     state.pendingUIState.tag = tag;
+                    state.pendingUIState.order_state = 'Done';
                     state.gpRangeFilter = range;
 
                     applyFilters();
 
-                    window.location.hash = '#/projects';
+                    location.hash = '#/projects';
                 }
             },
             onHover: (event, chartElement) => {
@@ -455,10 +470,10 @@ function renderGPChart(tagGPRanks) {
                     }
                 },
                 tooltip: {
-                    backgroundColor: 'rgba(12, 35, 23, 0.95)',
+                    backgroundColor: 'rgba(30, 41, 59, 0.95)',
                     titleColor: '#f4f7f5',
-                    bodyColor: '#a7f3d0',
-                    borderColor: 'var(--color-emerald)',
+                    bodyColor: colorMint,
+                    borderColor: colorEmerald,
                     borderWidth: 1,
                     padding: 10,
                     boxPadding: 5,
@@ -536,7 +551,7 @@ function renderRevenueDoughnut(tagBuckets) {
                     }
                 },
                 tooltip: {
-                    backgroundColor: 'rgba(12, 35, 23, 0.95)',
+                    backgroundColor: 'rgba(30, 41, 59, 0.95)',
                     callbacks: {
                         label: function(context) {
                             const value = context.raw;
@@ -601,15 +616,52 @@ function getDashboardMeta() {
 function renderScopeBar() {
     const meta = getDashboardMeta();
     const counts = meta.counts || {};
+    
     const setText = (id, value) => {
         const el = document.getElementById(id);
         if (el) el.textContent = value;
     };
-    setText('scopeListCount', counts.list_projects ?? (state.dashboardData?.projects || []).length);
-    setText('scopeDoneCount', counts.done_projects ?? state.dashboardData?.summary?.total_projects ?? 0);
-    setText('scopeValidDoneCount', counts.valid_done_projects ?? state.dashboardData?.summary?.valid_project_count ?? 0);
-    setText('scopeDateFrom', meta.date_from || state.dashboardData?.date_from || DEFAULT_DATE_FROM);
-    setText('scopeCompany', meta.company?.label || state.dashboardData?.company?.label || '-');
+    
+    const listCount = counts.list_projects ?? (state.dashboardData?.projects || []).length ?? 0;
+    const doneCount = counts.done_projects ?? state.dashboardData?.summary?.total_projects ?? 0;
+    const validCount = counts.valid_done_projects ?? state.dashboardData?.summary?.valid_project_count ?? 0;
+    
+    setText('scopeListCount', listCount);
+    setText('scopeDoneCount', doneCount);
+    setText('scopeValidDoneCount', validCount);
+    
+    const dateFromStr = meta.date_from || state.dashboardData?.date_from || DEFAULT_DATE_FROM;
+    setText('scopeDateFrom', dateFromStr);
+
+    // 1. Tính % KPI Hoàn tất
+    const doneBadge = document.getElementById('scopeDoneBadge');
+    if (doneBadge) {
+        const percent = listCount > 0 ? ((doneCount / listCount) * 100).toFixed(1) : '0.0';
+        doneBadge.textContent = `${percent}%`;
+    }
+
+    // 2. Tính % Valid BG > 0
+    const validBadge = document.getElementById('scopeValidBadge');
+    if (validBadge) {
+        const percent = doneCount > 0 ? ((validCount / doneCount) * 100).toFixed(1) : '0.0';
+        validBadge.textContent = `${percent}%`;
+    }
+
+    // 3. Tính số ngày từ ngày báo giá đã chọn đến hôm nay
+    const daysBadge = document.getElementById('scopeDaysBadge');
+    if (daysBadge) {
+        try {
+            const startDate = new Date(dateFromStr);
+            const today = new Date();
+            startDate.setHours(0,0,0,0);
+            today.setHours(0,0,0,0);
+            const diffTime = Math.max(0, today - startDate);
+            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+            daysBadge.textContent = `${diffDays} ngày qua`;
+        } catch (e) {
+            daysBadge.textContent = '- ngày qua';
+        }
+    }
 }
 
 // --- MODULE: assets/js/components/table.js ---
@@ -769,10 +821,12 @@ function renderProjectsTable(projects) {
     if (sortedProjects.length === 0) {
         const emptyTr = document.createElement('tr');
         emptyTr.innerHTML = `
-            <td colspan="10" style="text-align:center;padding:3rem 1rem;color:var(--color-text-secondary);">
-                <div style="font-size:2.5rem;margin-bottom:0.5rem;">📭</div>
-                <div style="font-weight:600;font-size:1rem;margin-bottom:0.3rem;">Không tìm thấy dự án nào</div>
-                <div style="font-size:0.85rem;opacity:0.7;">Thử thay đổi bộ lọc hoặc từ khóa tìm kiếm</div>
+            <td colspan="10" style="text-align:center;padding:5rem 2rem;color:var(--color-text-secondary);">
+                <div style="margin-bottom:1.25rem; display:inline-block; position:relative;">
+                    <i class="far fa-folder-open" style="font-size:3.5rem;color:var(--color-mint);filter:drop-shadow(0 0 12px var(--color-mint-glow));"></i>
+                </div>
+                <h3 style="font-family:var(--font-heading);font-weight:700;font-size:1.15rem;color:var(--color-text-primary);margin:0 0 0.5rem 0;">Không tìm thấy dự án nào</h3>
+                <p style="font-size:0.875rem;opacity:0.8;margin:0 auto;max-width:320px;line-height:1.5;">Thử thay đổi bộ lọc hoặc từ khóa tìm kiếm để khám phá dữ liệu khác.</p>
             </td>
         `;
         tbody.appendChild(emptyTr);
@@ -825,6 +879,10 @@ function renderProjectsTable(projects) {
         }
 
         const tr = document.createElement('tr');
+        tr.className = 'fade-in-up';
+        const indexOnPage = pageProjects.indexOf(p);
+        tr.style.animationDelay = `${indexOnPage * 0.025}s`;
+
         const isSelected = state.selectedProjects.has(p.project_id);
         tr.innerHTML = `
             <td style="text-align: center;"><input type="checkbox" class="project-checkbox" data-project-id="${p.project_id}" ${isSelected ? 'checked' : ''}></td>
@@ -1208,7 +1266,7 @@ function renderTagLeaderboard(tagBuckets) {
 
             applyFilters();
 
-            window.location.hash = '#/projects';
+            location.hash = '#/projects';
         });
 
         fragment.appendChild(div);
@@ -1401,8 +1459,8 @@ async function loadDashboard(refresh = false) {
         if (!overlay) {
             overlay = document.createElement('div');
             overlay.id = 'refreshOverlay';
-            overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(255,255,255,0.75);display:flex;align-items:center;justify-content:center;z-index:9999;backdrop-filter:blur(2px);';
-            overlay.innerHTML = '<div style="text-align:center;"><div style="width:48px;height:48px;border:4px solid #107850;border-top-color:transparent;border-radius:50%;animation:spin 0.8s linear infinite;margin:0 auto 12px;"></div><p style="font-family:var(--font-heading);font-weight:600;color:#0c2317;">Đang tải dữ liệu...</p></div>';
+            overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(240, 244, 248, 0.75);display:flex;align-items:center;justify-content:center;z-index:9999;backdrop-filter:blur(4px);';
+            overlay.innerHTML = '<div style="text-align:center;"><div style="width:48px;height:48px;border:4px solid #2b6cb0;border-top-color:transparent;border-radius:50%;animation:spin 0.8s linear infinite;margin:0 auto 12px;filter:drop-shadow(0 0 8px rgba(43, 108, 176, 0.3));"></div><p style="font-family:var(--font-heading);font-weight:600;color:#1e293b;">Đang tải dữ liệu...</p></div>';
             const styleEl = document.createElement('style');
             styleEl.textContent = '@keyframes spin{to{transform:rotate(360deg)}}';
             document.head.appendChild(styleEl);

@@ -154,10 +154,12 @@ export function renderProjectsTable(projects) {
     if (sortedProjects.length === 0) {
         const emptyTr = document.createElement('tr');
         emptyTr.innerHTML = `
-            <td colspan="10" style="text-align:center;padding:3rem 1rem;color:var(--color-text-secondary);">
-                <div style="font-size:2.5rem;margin-bottom:0.5rem;">📭</div>
-                <div style="font-weight:600;font-size:1rem;margin-bottom:0.3rem;">Không tìm thấy dự án nào</div>
-                <div style="font-size:0.85rem;opacity:0.7;">Thử thay đổi bộ lọc hoặc từ khóa tìm kiếm</div>
+            <td colspan="10" style="text-align:center;padding:5rem 2rem;color:var(--color-text-secondary);">
+                <div style="margin-bottom:1.25rem; display:inline-block; position:relative;">
+                    <i class="far fa-folder-open" style="font-size:3.5rem;color:var(--color-mint);filter:drop-shadow(0 0 12px var(--color-mint-glow));"></i>
+                </div>
+                <h3 style="font-family:var(--font-heading);font-weight:700;font-size:1.15rem;color:var(--color-text-primary);margin:0 0 0.5rem 0;">Không tìm thấy dự án nào</h3>
+                <p style="font-size:0.875rem;opacity:0.8;margin:0 auto;max-width:320px;line-height:1.5;">Thử thay đổi bộ lọc hoặc từ khóa tìm kiếm để khám phá dữ liệu khác.</p>
             </td>
         `;
         tbody.appendChild(emptyTr);
@@ -210,6 +212,10 @@ export function renderProjectsTable(projects) {
         }
 
         const tr = document.createElement('tr');
+        tr.className = 'fade-in-up';
+        const indexOnPage = pageProjects.indexOf(p);
+        tr.style.animationDelay = `${indexOnPage * 0.025}s`;
+
         const isSelected = state.selectedProjects.has(p.project_id);
         tr.innerHTML = `
             <td style="text-align: center;"><input type="checkbox" class="project-checkbox" data-project-id="${p.project_id}" ${isSelected ? 'checked' : ''}></td>

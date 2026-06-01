@@ -142,6 +142,7 @@
                 <div class="company-picker-box">
                     <label for="companySelector">Company:</label>
                     <select id="companySelector">
+                        <option value="all" selected>Tất cả công ty</option>
                         <option value="bonario">Bonario</option>
                         <option value="ordinaire">Ordinaire</option>
                     </select>
@@ -186,27 +187,25 @@
                     <div class="scope-pill">
                         <span class="scope-label">List</span>
                         <strong id="scopeListCount">0</strong>
-                        <span>mọi trạng thái</span>
+                        <span class="pill-badge badge-blue">100%</span>
+                        <span class="scope-pill-desc">mọi trạng thái</span>
                     </div>
                     <div class="scope-pill">
                         <span class="scope-label">KPI</span>
                         <strong id="scopeDoneCount">0</strong>
-                        <span>Hoàn tất</span>
+                        <span id="scopeDoneBadge" class="pill-badge badge-blue">-%</span>
+                        <span class="scope-pill-desc">Hoàn tất</span>
                     </div>
                     <div class="scope-pill">
                         <span class="scope-label">Valid</span>
                         <strong id="scopeValidDoneCount">0</strong>
-                        <span>BG > 0</span>
+                        <span id="scopeValidBadge" class="pill-badge badge-green">-%</span>
+                        <span class="scope-pill-desc">BG &gt; 0</span>
                     </div>
                     <div class="scope-pill muted">
                         <span class="scope-label">Từ ngày</span>
                         <strong id="scopeDateFrom">2026-01-01</strong>
-                        <span>ngày báo giá</span>
-                    </div>
-                    <div class="scope-pill muted">
-                        <span class="scope-label">Company</span>
-                        <strong id="scopeCompany">Bonario</strong>
-                        <span>phạm vi</span>
+                        <span id="scopeDaysBadge" class="pill-badge badge-gray">- ngày qua</span>
                     </div>
                 </section>
 
