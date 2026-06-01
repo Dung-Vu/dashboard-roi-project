@@ -165,20 +165,26 @@ class DashboardService:
 
         rows.sort(key=lambda row: (row.get("date_order") or "", row.get("sale_order_name") or "", row["project_id"]), reverse=True)
         
-        # Filter rows for statistics: chỉ tính summary/buckets/ranks với Order State = Done
-        done_rows = [row for row in rows if row.get("order_state") == "Done"]
-        
-        # Filter rows by company_key to build the company-specific subset filtered_rows
-        # If a row has no company_key, include it to preserve compatibility
+        # 1. Filter rows by company_key to build the company-specific subset (filtered_rows).
+        # We include rows with missing/no company_key to preserve backward compatibility.
         filtered_rows = [
             row for row in rows
             if company_key == "all" or not row.get("company_key") or row.get("company_key") == company_key
         ]
+        
+        # 2. Extract completed projects (Order State = Done) within the selected company scope.
+        # These are used to calculate the financial summary and metadata.
         filtered_done_rows = [row for row in filtered_rows if row.get("order_state") == "Done"]
+        
+        # 3. Extract completed projects (Order State = Done) across ALL companies combined.
+        # These are used to calculate tag statistics and ranks, which are company-independent.
+        done_rows = [row for row in rows if row.get("order_state") == "Done"]
         
         payload = {
             "projects": filtered_rows,
             "summary": self._build_projects_dashboard_summary(filtered_done_rows),
+            # Tag buckets and GP% distribution ranks aggregate data across ALL companies combined
+            # and are unaffected by the company filter, as per UI design constraints.
             "tag_buckets": self._build_tag_buckets(done_rows),
             "tag_gp_ranks": self._build_tag_gp_ranks(done_rows),
             "meta": self._build_projects_dashboard_meta(filtered_rows, filtered_done_rows, date_from, company_key),

@@ -195,7 +195,7 @@ function saveUIState() {
         tag: getElementValue('tagFilter'),
         state: getElementValue('stateFilter'),
         health: getElementValue('healthFilter'),
-        company: getElementValue('companySelector') || state.company,
+        company: state.company, // Read directly from global state since custom select trigger doesn't have .value
         sortColumn: state.sortColumn,
         sortDirection: state.sortDirection,
         route: location.hash || '#/overview',
@@ -222,11 +222,26 @@ function applySavedUIState() {
     if (searchInput && state.pendingUIState.search) {
         searchInput.value = state.pendingUIState.search;
     }
-    const companySelector = document.getElementById('companySelector');
     state.company = state.pendingUIState.company || DEFAULT_COMPANY;
-    if (companySelector) {
-        companySelector.value = state.company;
+    
+    // Synchronize Custom Company Selector UI (Trigger text and modal options active class)
+    const companyLabels = {
+        'all': 'Tất cả công ty',
+        'bonario': 'Bonario',
+        'ordinaire': 'Ordinaire'
+    };
+    const selectedLabel = document.getElementById('selectedCompanyLabel');
+    if (selectedLabel) {
+        selectedLabel.textContent = companyLabels[state.company] || state.company;
     }
+    document.querySelectorAll('.company-opt-btn').forEach(btn => {
+        if (btn.dataset.value === state.company) {
+            btn.classList.add('active');
+        } else {
+            btn.classList.remove('active');
+        }
+    });
+    
     state.sortColumn = state.pendingUIState.sortColumn || null;
     state.sortDirection = state.pendingUIState.sortDirection === 'desc' ? 'desc' : 'asc';
     state.gpRangeFilter = state.pendingUIState.gpRangeFilter || null;
@@ -1485,8 +1500,7 @@ async function loadDashboard(refresh = false) {
     try {
         const dateFrom = dateFromInput ? dateFromInput.value : '';
         const selectedDateFrom = dateFrom || DEFAULT_DATE_FROM;
-        const companySelector = document.getElementById('companySelector');
-        const selectedCompany = companySelector ? companySelector.value : (state.company || DEFAULT_COMPANY);
+        const selectedCompany = state.company || DEFAULT_COMPANY;
         state.company = selectedCompany;
         state.dashboardData = await fetchDashboard(selectedDateFrom, selectedCompany, refresh);
         if (dateFromInput) dateFromInput.value = state.dashboardData.date_from || selectedDateFrom;

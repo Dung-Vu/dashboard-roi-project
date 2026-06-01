@@ -140,12 +140,11 @@
                     <input type="date" id="dateFrom" value="2026-01-01">
                 </div>
                 <div class="company-picker-box">
-                    <label for="companySelector">Company:</label>
-                    <select id="companySelector">
-                        <option value="all" selected>Tất cả công ty</option>
-                        <option value="bonario">Bonario</option>
-                        <option value="ordinaire">Ordinaire</option>
-                    </select>
+                    <label>Company:</label>
+                    <button id="companySelectTrigger" class="custom-select-btn" type="button">
+                        <span id="selectedCompanyLabel">Tất cả công ty</span>
+                        <i class="fas fa-chevron-down" aria-hidden="true"></i>
+                    </button>
                 </div>
                 <button id="refreshBtn" class="btn btn-primary-forest w-full" style="margin-top: 1rem;">
                     <i class="fas fa-sync-alt" aria-hidden="true"></i>
@@ -420,6 +419,36 @@
                 </section>
                 
             </main>
+        </div>
+    </div>
+
+    <!-- Company Selection Modal -->
+    <div id="companyModal" class="modal-overlay" style="display: none;">
+        <div class="modal-content glass-panel fade-in-up">
+            <div class="modal-header">
+                <h3>Chọn công ty</h3>
+                <button id="closeCompanyModal" class="close-modal-btn" aria-label="Close modal">✕</button>
+            </div>
+            <div class="modal-body">
+                <div class="company-options-list">
+                    <button class="company-opt-btn active" data-value="all" type="button">
+                        <i class="fas fa-globe" aria-hidden="true"></i>
+                        <span>Tất cả công ty</span>
+                    </button>
+                    <button class="company-opt-btn" data-value="bonario" type="button">
+                        <i class="fas fa-building" aria-hidden="true"></i>
+                        <span>Bonario</span>
+                    </button>
+                    <button class="company-opt-btn" data-value="ordinaire" type="button">
+                        <i class="fas fa-building-user" aria-hidden="true"></i>
+                        <span>Ordinaire</span>
+                    </button>
+                </div>
+                <div class="company-modal-warning">
+                    <i class="fas fa-info-circle" aria-hidden="true"></i>
+                    <span>Chú ý: Lựa chọn công ty không ảnh hưởng đến thống kê Tag.</span>
+                </div>
+            </div>
         </div>
     </div>
 

@@ -133,8 +133,7 @@ async function loadDashboard(refresh = false) {
     try {
         const dateFrom = dateFromInput ? dateFromInput.value : '';
         const selectedDateFrom = dateFrom || DEFAULT_DATE_FROM;
-        const companySelector = document.getElementById('companySelector');
-        const selectedCompany = companySelector ? companySelector.value : (state.company || DEFAULT_COMPANY);
+        const selectedCompany = state.company || DEFAULT_COMPANY;
         state.company = selectedCompany;
         state.dashboardData = await fetchDashboard(selectedDateFrom, selectedCompany, refresh);
         if (dateFromInput) dateFromInput.value = state.dashboardData.date_from || selectedDateFrom;
@@ -207,12 +206,67 @@ document.addEventListener('DOMContentLoaded', () => {
         loadDashboard(true);
     });
 
-    document.getElementById('companySelector')?.addEventListener('change', (event) => {
-        state.company = event.target.value || DEFAULT_COMPANY;
-        state.currentPage = 1;
-        state.selectedProjects.clear();
-        saveUIState();
-        loadDashboard(false);
+    // Custom Company Selector Modal Controllers
+    const companyModal = document.getElementById('companyModal');
+    const companySelectTrigger = document.getElementById('companySelectTrigger');
+    const closeCompanyModal = document.getElementById('closeCompanyModal');
+
+    // 1. Open the Company Selection Modal
+    companySelectTrigger?.addEventListener('click', () => {
+        if (companyModal) {
+            companyModal.style.display = 'flex';
+        }
+    });
+
+    // 2. Close the Modal via Close button
+    closeCompanyModal?.addEventListener('click', () => {
+        if (companyModal) {
+            companyModal.style.display = 'none';
+        }
+    });
+
+    // 3. Close the Modal when clicking on the outside dark overlay background
+    companyModal?.addEventListener('click', (event) => {
+        if (event.target === companyModal) {
+            companyModal.style.display = 'none';
+        }
+    });
+
+    // 4. Handle clicking a Company option button inside the Modal
+    document.querySelectorAll('.company-opt-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const value = btn.dataset.value || 'all';
+            
+            // Update global state company
+            state.company = value;
+            
+            // Reset pagination and active selections
+            state.currentPage = 1;
+            state.selectedProjects.clear();
+
+            // Sync the trigger button label and modal active button classes
+            const companyLabels = {
+                'all': 'Tất cả công ty',
+                'bonario': 'Bonario',
+                'ordinaire': 'Ordinaire'
+            };
+            const selectedLabel = document.getElementById('selectedCompanyLabel');
+            if (selectedLabel) {
+                selectedLabel.textContent = companyLabels[value] || value;
+            }
+            document.querySelectorAll('.company-opt-btn').forEach(b => {
+                b.classList.toggle('active', b.dataset.value === value);
+            });
+
+            // Close the modal
+            if (companyModal) {
+                companyModal.style.display = 'none';
+            }
+
+            // Save UI state and trigger dashboard reload
+            saveUIState();
+            loadDashboard(false);
+        });
     });
 
     const debouncedApplyFilters = debounce(applyFilters, 300);
