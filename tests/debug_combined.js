@@ -111,11 +111,8 @@ function showLoadingOverlay() {
     if (!overlay) {
         overlay = document.createElement('div');
         overlay.id = 'refreshOverlay';
-        overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(240, 244, 248, 0.75);display:flex;align-items:center;justify-content:center;z-index:9999;backdrop-filter:blur(4px);';
-        overlay.innerHTML = '<div style="text-align:center;"><div style="width:48px;height:48px;border:4px solid #2b6cb0;border-top-color:transparent;border-radius:50%;animation:spin 0.8s linear infinite;margin:0 auto 12px;filter:drop-shadow(0 0 8px rgba(43, 108, 176, 0.3));"></div><p style="font-family:var(--font-heading);font-weight:600;color:#1e293b;">Đang tải dữ liệu...</p></div>';
-        const styleEl = document.createElement('style');
-        styleEl.textContent = '@keyframes spin{to{transform:rotate(360deg)}}';
-        document.head.appendChild(styleEl);
+        overlay.className = 'loading-overlay';
+        overlay.innerHTML = '<div class="spinner"></div><p class="loading-text">Đang tải dữ liệu...</p>';
         document.body.appendChild(overlay);
     } else {
         overlay.style.display = 'flex';
@@ -852,7 +849,7 @@ function renderProjectsTable(projects) {
         const adjustedCost = p.adjusted_expected_cost ?? p.native_expected_cost;
 
         let healthBadgeHTML = '';
-        if (p.gp_percent === null || p.gp_percent === undefined) {
+        if (p.gp_percent === null || p.gp_percent === undefined || Number.isNaN(Number(p.gp_percent))) {
             healthBadgeHTML = '<span style="color: var(--color-text-secondary); opacity: 0.5;">-</span>';
         } else {
             let healthClass = 'health-coral';
@@ -1400,6 +1397,17 @@ function handleRouting() {
         }
     });
 
+    if (hash !== '#/ranks') {
+        if (state.gpChart) {
+            state.gpChart.destroy();
+            state.gpChart = null;
+        }
+        if (state.revenueDoughnutChart) {
+            state.revenueDoughnutChart.destroy();
+            state.revenueDoughnutChart = null;
+        }
+    }
+
     if (hash === '#/ranks' && state.dashboardData) {
         if (!state.gpChart) {
             renderGPChart(state.dashboardData.tag_gp_ranks);
@@ -1459,11 +1467,8 @@ async function loadDashboard(refresh = false) {
         if (!overlay) {
             overlay = document.createElement('div');
             overlay.id = 'refreshOverlay';
-            overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(240, 244, 248, 0.75);display:flex;align-items:center;justify-content:center;z-index:9999;backdrop-filter:blur(4px);';
-            overlay.innerHTML = '<div style="text-align:center;"><div style="width:48px;height:48px;border:4px solid #2b6cb0;border-top-color:transparent;border-radius:50%;animation:spin 0.8s linear infinite;margin:0 auto 12px;filter:drop-shadow(0 0 8px rgba(43, 108, 176, 0.3));"></div><p style="font-family:var(--font-heading);font-weight:600;color:#1e293b;">Đang tải dữ liệu...</p></div>';
-            const styleEl = document.createElement('style');
-            styleEl.textContent = '@keyframes spin{to{transform:rotate(360deg)}}';
-            document.head.appendChild(styleEl);
+            overlay.className = 'loading-overlay';
+            overlay.innerHTML = '<div class="spinner"></div><p class="loading-text">Đang tải dữ liệu...</p>';
             document.body.appendChild(overlay);
         } else {
             overlay.style.display = 'flex';

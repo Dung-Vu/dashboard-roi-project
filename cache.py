@@ -23,7 +23,9 @@ class PersistentCache:
 
     def _init_db(self):
         with self._lock:
-            conn = sqlite3.connect(str(self.db_path))
+            conn = sqlite3.connect(str(self.db_path), timeout=30.0)
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS cache (
                     key TEXT PRIMARY KEY,
@@ -37,7 +39,7 @@ class PersistentCache:
 
     def get(self, key: str) -> dict | None:
         with self._lock:
-            conn = sqlite3.connect(str(self.db_path))
+            conn = sqlite3.connect(str(self.db_path), timeout=30.0)
             row = conn.execute(
                 "SELECT value, created_at FROM cache WHERE key = ?", (key,)
             ).fetchone()
@@ -51,7 +53,7 @@ class PersistentCache:
 
     def set(self, key: str, value: dict):
         with self._lock:
-            conn = sqlite3.connect(str(self.db_path))
+            conn = sqlite3.connect(str(self.db_path), timeout=30.0)
             conn.execute(
                 "INSERT OR REPLACE INTO cache (key, value, created_at) VALUES (?, ?, ?)",
                 (key, json.dumps(value), time.time()),
@@ -61,7 +63,7 @@ class PersistentCache:
 
     def clear(self, prefix: str = ""):
         with self._lock:
-            conn = sqlite3.connect(str(self.db_path))
+            conn = sqlite3.connect(str(self.db_path), timeout=30.0)
             if prefix:
                 conn.execute("DELETE FROM cache WHERE key LIKE ?", (f"{prefix}%",))
             else:
@@ -71,7 +73,7 @@ class PersistentCache:
 
     def cleanup_expired(self):
         with self._lock:
-            conn = sqlite3.connect(str(self.db_path))
+            conn = sqlite3.connect(str(self.db_path), timeout=30.0)
             conn.execute(
                 "DELETE FROM cache WHERE ? - created_at > ?",
                 (time.time(), self.ttl),

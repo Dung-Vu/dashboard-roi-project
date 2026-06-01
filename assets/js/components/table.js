@@ -185,7 +185,7 @@ export function renderProjectsTable(projects) {
         const adjustedCost = p.adjusted_expected_cost ?? p.native_expected_cost;
 
         let healthBadgeHTML = '';
-        if (p.gp_percent === null || p.gp_percent === undefined) {
+        if (p.gp_percent === null || p.gp_percent === undefined || Number.isNaN(Number(p.gp_percent))) {
             healthBadgeHTML = '<span style="color: var(--color-text-secondary); opacity: 0.5;">-</span>';
         } else {
             let healthClass = 'health-coral';

@@ -405,3 +405,48 @@ Integrity mode: `development`
 - [ ] Chạy bộ kiểm thử tự động `pytest` thành công 100% (23/23 tests pass).
 - [ ] Chạy bộ stress test JS thành công 100% (12/12 assertions pass).
 
+## Follow-up — 2026-06-01T22:18:30+07:00
+
+# Teamwork Project Prompt — Draft
+
+> Status: Launched
+> Goal: Craft prompt → get user approval → delegate to teamwork_preview
+
+Nghiên cứu, phân tích và cải tiến toàn diện khía cạnh Visual (Giao diện hiển thị trực quan) và Performance (Hiệu năng tải trang, phản hồi API, render biểu đồ và bảng) của hệ thống Bonario ROI Dashboard nhằm mang lại một sản phẩm có tính thẩm mỹ và hiệu năng cao.
+
+Working directory: `d:\dashboard-roi-project`
+Integrity mode: `development`
+
+## Requirements
+
+### R1. Phân tích & Tối ưu hóa Visual (Giao diện trực quan)
+- Thực hiện rà soát toàn diện giao diện của Bonario ROI Dashboard trên các màn hình và tỷ lệ zoom khác nhau (đặc biệt là 100% và 80%).
+- Tinh chỉnh khoảng cách (padding, margin), font chữ, căn lề của các khối (Scope Bar, Table Filters, KPI Cards, Project Table) để loại bỏ các khoảng trống thừa hoặc hiện tượng lệch hàng, rớt chữ.
+- Đồng bộ hóa các hiệu ứng chuyển động vi mô (micro-animations), hiệu ứng hover và loading overlay với hệ màu Soft Coastal Pastel Blue chủ đạo.
+
+### R2. Tối ưu hóa Performance (Hiệu năng hiển thị & Render)
+- Phân tích hiệu năng tải trang ban đầu, thời gian phản hồi API và tốc độ render dữ liệu.
+- Đảm bảo cơ chế cache SQLite và in-memory hoạt động mượt mà, tối ưu hóa các luồng revalidation chạy ngầm để không gây ảnh hưởng đến luồng chính.
+- Loại bỏ hoàn toàn các lỗi layout shifts (CLS) và hiện tượng xuất hiện thanh cuộn dọc/ngang tạm thời khi chuyển trang (0.3s đầu).
+- Giảm thiểu việc tính toán DOM trùng lặp và tối ưu hóa việc vẽ biểu đồ Chart.js (tránh chồng chéo canvas hoặc rò rỉ bộ nhớ).
+
+### R3. Hệ thống kiểm thử tự động & Stress Test
+- Đảm bảo toàn bộ các bài test backend (`pytest`) và frontend stress tests đều vượt qua với tỷ lệ thành công 100%.
+
+## Acceptance Criteria
+
+### Visual & Layout Quality
+- [ ] Giao diện hiển thị cân đối hoàn toàn ở cả tỷ lệ zoom 100% và 80% mà không bị lỗi layout shift, clipping hay vỡ khung.
+- [ ] Các dropdown của bộ lọc trong Table Filters nằm thẳng hàng và đẹp mắt trên màn hình Desktop, không bị rớt hàng lệch lạc.
+- [ ] Thanh chỉ báo Scope Bar hiển thị cân đối tuyệt đối, không có khoảng trống thừa màu lam nhạt ở bên phải.
+- [ ] Không còn bất kỳ hiện tượng xuất hiện thanh cuộn dọc/ngang tạm thời (0.3s) khi chuyển đổi giữa các trang chi tiết trong list order.
+
+### Performance & Response Time
+- [ ] Thời gian phản hồi của API `/api/projects-dashboard` đạt dưới 50ms khi lấy dữ liệu từ cache.
+- [ ] Biểu đồ Chart.js và các sparklines hiển thị mượt mà, tự động resize chính xác mà không bị rò rỉ bộ nhớ hay chồng canvas cũ.
+- [ ] Nút "Đồng bộ Odoo" hiển thị spinner đồng màu Coastal Blue và cập nhật chính xác dữ liệu từ Odoo ngầm.
+
+---
+*Next: when approved → delegate via invoke_subagent (see Delegation Protocol)*
+
+

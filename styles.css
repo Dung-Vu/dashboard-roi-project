@@ -56,7 +56,7 @@
   --gradient-gold: linear-gradient(135deg, #ffd700 0%, #d4af37 100%);
   --gradient-silver: linear-gradient(135deg, #e6ece8 0%, #b8c5b0 100%);
   --gradient-bronze: linear-gradient(135deg, #d3c2b0 0%, #aa8f76 100%);
-  --zoom-factor: 0.8;
+  --color-border: rgba(43, 108, 176, 0.15);
 }
 
 /* ===== Base Reset ===== */
@@ -69,7 +69,6 @@
 
 html {
   scroll-behavior: smooth;
-  zoom: var(--zoom-factor); /* Replicates the exact 80% browser zoom scale preferred by the user */
 }
 
 body {
@@ -80,9 +79,13 @@ body {
   background-repeat: no-repeat;
   background-attachment: fixed;
   color: var(--color-text-primary);
-  min-height: calc(100vh / var(--zoom-factor));
-  overflow-x: hidden;
+  min-height: 100vh;
   position: relative;
+}
+
+html, body {
+  overflow: hidden !important;
+  height: 100%;
 }
 
 /* ===== Skip Link (Accessibility) ===== */
@@ -108,9 +111,10 @@ body {
 .loading-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(244, 247, 245, 0.7);
+  background: rgba(240, 244, 248, 0.8);
   backdrop-filter: blur(4px);
-  z-index: 1000;
+  -webkit-backdrop-filter: blur(4px);
+  z-index: 9999;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -118,12 +122,13 @@ body {
   gap: 1rem;
 }
 .loading-overlay .spinner {
-  width: 40px;
-  height: 40px;
-  border: 3px solid var(--color-border);
+  width: 48px;
+  height: 48px;
+  border: 4px solid rgba(43, 108, 176, 0.15);
   border-top-color: var(--color-emerald);
   border-radius: 50%;
-  animation: spin 0.8s linear infinite;
+  animation: spin 0.8s cubic-bezier(0.55, 0.15, 0.45, 0.85) infinite;
+  filter: drop-shadow(0 0 8px var(--color-emerald-glow));
 }
 .loading-overlay .loading-text {
   color: var(--color-text-primary);
@@ -272,7 +277,7 @@ body {
 .app-layout {
   display: grid;
   grid-template-columns: 300px 1fr;
-  min-height: calc(100vh / var(--zoom-factor));
+  min-height: 100vh;
   width: 100%;
   gap: 0;
 }
@@ -286,7 +291,7 @@ body {
   padding: 30px 20px;
   display: flex;
   flex-direction: column;
-  height: calc(100vh / var(--zoom-factor) - 40px);
+  height: calc(100vh - 40px);
   position: sticky;
   top: 20px;
   margin: 20px 10px 20px 20px;
@@ -294,6 +299,8 @@ body {
   box-shadow: 0 20px 50px rgba(4, 9, 6, 0.25);
   border-radius: 24px !important;
   transition: background 0.3s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.3s cubic-bezier(0.16, 1, 0.3, 1), transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  overflow-y: auto;
+  scrollbar-width: thin;
 }
 
 
@@ -312,7 +319,6 @@ body {
   border-radius: 28px 10px 28px 10px; /* Leaf shape */
   box-shadow: 0 0 15px var(--color-mint-glow);
   animation: logoPulse 4s infinite ease-in-out alternate;
-  will-change: transform, filter;
 }
 
 @keyframes logoPulse {
@@ -348,7 +354,6 @@ body {
   border-radius: 4px;
   box-shadow: 0 0 15px var(--color-mint), 0 0 5px var(--color-mint);
   transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1), height 0.4s cubic-bezier(0.16, 1, 0.3, 1);
-  will-change: transform, height;
   pointer-events: none;
   z-index: 10;
 }
@@ -489,8 +494,9 @@ body {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  height: calc(100vh / var(--zoom-factor) - 40px);
+  height: calc(100vh - 40px);
   overflow-y: auto;
+  overflow-x: hidden !important;
   scrollbar-gutter: stable;
   margin: 20px 20px 20px 10px;
   border-radius: 24px;
@@ -556,6 +562,8 @@ body {
   font-size: 14px;
   outline: none;
   transition: var(--transition-smooth);
+  height: 38px;
+  box-sizing: border-box;
 }
 
 .search-box input:focus {
@@ -746,7 +754,8 @@ body {
 }
 
 .scope-pill {
-  display: inline-flex;
+  display: flex;
+  width: 100%;
   align-items: center;
   gap: 0.55rem;
   min-width: 0;
@@ -1108,7 +1117,7 @@ body {
 .table-filters-box {
   display: flex;
   align-items: center;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   gap: 0.75rem;
 }
 
@@ -1138,6 +1147,8 @@ body {
   background-repeat: no-repeat;
   background-position: right 0.75rem center;
   background-size: 0.85rem;
+  height: 38px;
+  box-sizing: border-box;
 }
 
 .filter-select:focus {
@@ -1609,6 +1620,11 @@ body {
     flex-direction: column;
     width: 100%;
     gap: 0.5rem;
+    align-items: stretch !important;
+  }
+  .project-search-box {
+    max-width: none !important;
+    width: 100% !important;
   }
   .filter-select {
     width: 100% !important;
@@ -1715,8 +1731,6 @@ body {
   border-radius: 20px;
   font-weight: 700 !important;
   font-size: 0.825rem;
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
   box-shadow: 0 4px 12px rgba(0,0,0,0.02);
 }
 .health-orb-badge .orb-dot {
@@ -1958,6 +1972,10 @@ body {
   font-weight: 700;
   color: var(--color-text-primary);
   font-family: var(--font-heading);
+  text-overflow: ellipsis;
+  overflow: hidden;
+  white-space: nowrap;
+  max-width: 100%;
 }
 
 /* Selected row highlight */
@@ -2031,7 +2049,7 @@ body {
 @keyframes fadeInUp {
   from {
     opacity: 0;
-    transform: translate3d(0, 12px, 0);
+    transform: translate3d(0, 4px, 0);
   }
   to {
     opacity: 1;
@@ -2041,4 +2059,15 @@ body {
 
 .fade-in-up {
   animation: fadeInUp 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+  will-change: transform, opacity;
+  backface-visibility: hidden;
+}
+
+@media (max-width: 600px) {
+  .table-footer {
+    flex-direction: column !important;
+    gap: 0.75rem !important;
+    align-items: center !important;
+    text-align: center !important;
+  }
 }
