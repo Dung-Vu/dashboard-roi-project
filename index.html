@@ -95,13 +95,6 @@
             <div class="particle p6" aria-hidden="true"></div>
             <div class="particle p7" aria-hidden="true"></div>
             <div class="particle p8" aria-hidden="true"></div>
-            <div class="particle p9" aria-hidden="true"></div>
-            <div class="particle p10" aria-hidden="true"></div>
-            <div class="particle p11" aria-hidden="true"></div>
-            <div class="particle p12" aria-hidden="true"></div>
-            <div class="particle p13" aria-hidden="true"></div>
-            <div class="particle p14" aria-hidden="true"></div>
-            <div class="particle p15" aria-hidden="true"></div>
         </div>
     </div>
 
@@ -145,6 +138,13 @@
                 <div class="date-picker-box">
                     <label for="dateFrom">Từ ngày:</label>
                     <input type="date" id="dateFrom" value="2026-01-01">
+                </div>
+                <div class="company-picker-box">
+                    <label for="companySelector">Company:</label>
+                    <select id="companySelector">
+                        <option value="bonario">Bonario</option>
+                        <option value="ordinaire">Ordinaire</option>
+                    </select>
                 </div>
                 <button id="refreshBtn" class="btn btn-primary-forest w-full" style="margin-top: 1rem;">
                     <i class="fas fa-sync-alt" aria-hidden="true"></i>
@@ -203,6 +203,11 @@
                         <strong id="scopeDateFrom">2026-01-01</strong>
                         <span>ngày báo giá</span>
                     </div>
+                    <div class="scope-pill muted">
+                        <span class="scope-label">Company</span>
+                        <strong id="scopeCompany">Bonario</strong>
+                        <span>phạm vi</span>
+                    </div>
                 </section>
 
                 <!-- Route 1: Tổng quan dự án -->
@@ -241,7 +246,7 @@
                             </div>
                             <div class="kpi-body">
                                 <div class="kpi-value" id="totalCost">0</div>
-                                <div class="kpi-subtitle" style="color: var(--color-text-secondary); font-weight: 500;">Native Expected</div>
+                                <div class="kpi-subtitle" style="color: var(--color-text-secondary); font-weight: 500;">Adjusted Expected</div>
                             </div>
                         </div>
                         <div class="kpi-card glass-panel border-purple">
@@ -363,7 +368,7 @@
                                         <th scope="col">Tags</th>
                                         <th scope="col">Trạng thái</th>
                                         <th scope="col" class="text-right sortable" data-sort="bg_untaxed">BG Untaxed</th>
-                                        <th scope="col" class="text-right sortable" data-sort="native_expected_cost">Chi phí</th>
+                                        <th scope="col" class="text-right sortable" data-sort="adjusted_expected_cost">Chi phí</th>
                                         <th scope="col" class="text-right sortable" data-sort="gp_amount">Lợi nhuận</th>
                                         <th scope="col" class="text-right sortable" data-sort="gp_percent">GP%</th>
                                     </tr>

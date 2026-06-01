@@ -1,7 +1,7 @@
 import { API_BASE } from './config.js';
 import { state } from './state.js';
 
-export async function fetchDashboard(dateFrom, refresh = false) {
+export async function fetchDashboard(dateFrom, company = 'bonario', refresh = false) {
     if (state.currentAbortController) {
         state.currentAbortController.abort();
     }
@@ -11,9 +11,9 @@ export async function fetchDashboard(dateFrom, refresh = false) {
 
     const timeoutId = setTimeout(() => {
         controller.abort();
-    }, 60000);
+    }, 180000);
 
-    const params = new URLSearchParams({ date_from: dateFrom });
+    const params = new URLSearchParams({ date_from: dateFrom, company });
     if (refresh) params.set('refresh', '1');
 
     try {
@@ -26,7 +26,7 @@ export async function fetchDashboard(dateFrom, refresh = false) {
     } catch (err) {
         clearTimeout(timeoutId);
         if (err.name === 'AbortError') {
-            throw new Error('Yêu cầu bị hủy hoặc hết thời gian chờ (60s)');
+            throw new Error('Yêu cầu bị hủy hoặc hết thời gian chờ (180s)');
         }
         throw err;
     }

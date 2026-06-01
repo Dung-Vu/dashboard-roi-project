@@ -139,5 +139,23 @@ class FrontendIntegrityTest(unittest.TestCase):
         self.assertIn("function renderOperationalPanels(", js, "renderOperationalPanels() missing from app.js!")
         self.assertIn("function getHealthBucket(", js, "getHealthBucket() missing from app.js!")
 
+    def test_phase_4_frontend_upgrade(self):
+        # 1. Verify particle divs p9-p15 were deleted in index.html, leaving only p1-p8
+        html = self.index_path.read_text(encoding="utf-8")
+        self.assertIn("particle p8", html)
+        self.assertNotIn("particle p9", html)
+        self.assertNotIn("particle p15", html)
+
+        # 2. Verify TAG_COLORS object is defined in JS files
+        js = self.get_combined_js()
+        self.assertIn("TAG_COLORS", js)
+        self.assertIn("Nội thất rời", js)
+        self.assertIn("Giấy dán tường", js)
+        self.assertIn("Rèm", js)
+        self.assertIn("Vải nội thất", js)
+
+        # 3. Verify range sorting regex was updated in renderGPChart
+        self.assertIn("match(/(-?\\d+)/)", js.replace(" ", ""))
+
 if __name__ == "__main__":
     unittest.main()

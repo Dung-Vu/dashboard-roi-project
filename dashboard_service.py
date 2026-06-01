@@ -8,6 +8,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from threading import Lock
 from time import monotonic
 from typing import Any
+import unicodedata
 
 from odoo_client import OdooAPI, OdooAPIError
 from cache import PersistentCache
@@ -51,6 +52,10 @@ MATERIAL_LOGISTICS_KEYWORDS = (
     "ship",
     "giao",
 )
+COMPANY_SCOPES = {
+    "bonario": {"label": "Bonario", "aliases": ("bonario",)},
+    "ordinaire": {"label": "Ordinaire", "aliases": ("ordinaire",)},
+}
 
 
 def as_decimal(value: Any) -> Decimal:
@@ -75,6 +80,11 @@ def relation_id(value: Any) -> int | None:
     return None
 
 
+def normalized_text(value: Any) -> str:
+    text = unicodedata.normalize("NFKD", str(value or ""))
+    return text.encode("ascii", "ignore").decode("ascii").lower()
+
+
 class DashboardService:
     def __init__(self, client: OdooAPI):
         self.client = client
@@ -85,9 +95,16 @@ class DashboardService:
     def test_connection(self) -> dict[str, Any]:
         return self.client.test_connection()
 
-    def build_projects_dashboard(self, date_from: str = "2026-01-01", *, refresh: bool = False) -> dict[str, Any]:
+    def build_projects_dashboard(
+        self,
+        date_from: str = "2026-01-01",
+        *,
+        company: str = "bonario",
+        refresh: bool = False,
+    ) -> dict[str, Any]:
         date_from = self._normalize_date_from(date_from)
-        cache_key = date_from
+        company_key = self._normalize_company_key(company)
+        cache_key = f"{company_key}:{date_from}"
         if refresh:
             self._db_cache.clear("profitability:")
             logger.info("Cleared profitability cache for refresh")
@@ -97,7 +114,16 @@ class DashboardService:
                 if cached and monotonic() - cached[0] < PROJECTS_DASHBOARD_TTL_SECONDS:
                     return cached[1]
 
-        sale_orders = self._get_dashboard_sale_orders(date_from)
+        if refresh:
+            self._db_cache.clear("profitability:")
+            logger.info("Cleared profitability cache for refresh")
+        if not refresh:
+            with self._cache_lock:
+                cached = self._projects_dashboard_cache.get(cache_key)
+                if cached and monotonic() - cached[0] < PROJECTS_DASHBOARD_TTL_SECONDS:
+                    return cached[1]
+
+        sale_orders = self._get_dashboard_sale_orders(date_from, company_key)
         sale_order_ids = [order["id"] for order in sale_orders]
         sale_orders_by_id = {order["id"]: order for order in sale_orders}
         tag_map = self._get_sale_order_tag_map(sale_orders)
@@ -106,10 +132,11 @@ class DashboardService:
         filtered_so_ids = [so_id for so_id, tags in tag_map.items() if tags]
         if not filtered_so_ids:
             # Không có SO nào match tags
-            return self._build_empty_dashboard(date_from)
+            return self._build_empty_dashboard(date_from, company_key)
         
         projects = self._get_projects_for_sale_orders(filtered_so_ids)
         sale_orders_by_id = {so_id: sale_orders_by_id[so_id] for so_id in filtered_so_ids if so_id in sale_orders_by_id}
+        analytic_adjustments = self._build_dashboard_analytic_adjustments(projects, sale_orders_by_id)
 
         rows: list[dict[str, Any]] = []
         if projects:
@@ -125,6 +152,7 @@ class DashboardService:
                         project,
                         sale_orders_by_id,
                         tag_map,
+                        analytic_adjustments,
                     )
                     for project in projects
                 ]
@@ -144,13 +172,22 @@ class DashboardService:
         # Filter rows for statistics: chỉ tính summary/buckets/ranks với Order State = Done
         done_rows = [row for row in rows if row.get("order_state") == "Done"]
         
+        # Filter rows by company_key to build the company-specific subset filtered_rows
+        # If a row has no company_key, include it to preserve compatibility
+        filtered_rows = [
+            row for row in rows
+            if not row.get("company_key") or row.get("company_key") == company_key
+        ]
+        filtered_done_rows = [row for row in filtered_rows if row.get("order_state") == "Done"]
+        
         payload = {
-            "projects": rows,
-            "summary": self._build_projects_dashboard_summary(done_rows),
+            "projects": filtered_rows,
+            "summary": self._build_projects_dashboard_summary(filtered_done_rows),
             "tag_buckets": self._build_tag_buckets(done_rows),
             "tag_gp_ranks": self._build_tag_gp_ranks(done_rows),
-            "meta": self._build_projects_dashboard_meta(rows, done_rows, date_from),
+            "meta": self._build_projects_dashboard_meta(filtered_rows, filtered_done_rows, date_from, company_key),
             "date_from": date_from,
+            "company": self._company_payload(company_key),
             "fetched_at": datetime.now(timezone.utc).isoformat(),
         }
 
@@ -158,7 +195,7 @@ class DashboardService:
             self._projects_dashboard_cache[cache_key] = (monotonic(), payload)
         return payload
 
-    def _build_empty_dashboard(self, date_from: str) -> dict[str, Any]:
+    def _build_empty_dashboard(self, date_from: str, company_key: str = "bonario") -> dict[str, Any]:
         payload = {
             "projects": [],
             "summary": {
@@ -166,17 +203,20 @@ class DashboardService:
                 "valid_project_count": 0,
                 "total_bg_untaxed": 0,
                 "total_native_expected_cost": 0,
+                "total_adjusted_expected_cost": 0,
+                "total_cost_adjustment_amount": 0,
                 "total_gp_amount": 0,
                 "weighted_gp_percent": 0,
             },
             "tag_buckets": {},
             "tag_gp_ranks": {},
-            "meta": self._build_projects_dashboard_meta([], [], date_from),
+            "meta": self._build_projects_dashboard_meta([], [], date_from, company_key),
             "date_from": date_from,
+            "company": self._company_payload(company_key),
             "fetched_at": datetime.now(timezone.utc).isoformat(),
         }
         with self._cache_lock:
-            self._projects_dashboard_cache[date_from] = (monotonic(), payload)
+            self._projects_dashboard_cache[f"{company_key}:{date_from}"] = (monotonic(), payload)
         return payload
 
     def _normalize_date_from(self, date_from: str) -> str:
@@ -189,26 +229,109 @@ class DashboardService:
                 method="search_read",
             ) from exc
 
-    def _get_dashboard_sale_orders(self, date_from: str) -> list[dict[str, Any]]:
-        sale_orders = self.client.search_read(
-            "sale.order",
-            [["date_order", ">=", date_from]],
-            [
-                "id",
-                "name",
-                "partner_id",
-                "date_order",
-                "amount_untaxed",
-                "x_sale_order_tag_ids",
-                "x_studio_selection_field_q4_1imrcsjj8",
-                "user_id",
-            ],
+    def _normalize_company_key(self, company: str | None) -> str:
+        normalized = normalized_text(company or "bonario").strip()
+        for key, scope in COMPANY_SCOPES.items():
+            if normalized == key or normalized in scope["aliases"]:
+                return key
+        raise OdooAPIError(
+            f"Unsupported company scope: {company}",
+            model="res.company",
+            method="search_read",
         )
+
+    def _company_payload(self, company_key: str) -> dict[str, str]:
+        return {"key": company_key, "label": COMPANY_SCOPES[company_key]["label"]}
+
+    def _company_key_from_ref(self, company_ref: Any) -> str | None:
+        company_name = relation_name(company_ref)
+        normalized = normalized_text(company_name)
+        for key, scope in COMPANY_SCOPES.items():
+            if any(alias in normalized for alias in scope["aliases"]):
+                return key
+        return None
+
+    def _get_dashboard_sale_orders(self, date_from: str, company_key: str) -> list[dict[str, Any]]:
+        fields = [
+            "id",
+            "name",
+            "partner_id",
+            "date_order",
+            "amount_untaxed",
+            "x_sale_order_tag_ids",
+            "x_studio_selection_field_q4_1imrcsjj8",
+            "user_id",
+            "company_id",
+        ]
+        
+        companies = []
+        try:
+            companies = self.client.search_read("res.company", [], ["id", "name"])
+        except Exception as e:
+            logger.warning(f"Failed to retrieve companies from Odoo: {e}. Falling back to single query.")
+
+        if not companies:
+            sale_orders = self.client.search_read(
+                "sale.order",
+                [["date_order", ">=", date_from]],
+                fields,
+            )
+        else:
+            sale_orders = []
+            max_workers = min(PROJECTS_DASHBOARD_MAX_WORKERS, len(companies) + 1)
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = {}
+                for company in companies:
+                    c_id = company["id"]
+                    future = executor.submit(
+                        self.client.call_method,
+                        "sale.order",
+                        "search_read",
+                        [[["date_order", ">=", date_from], ["company_id", "=", c_id]]],
+                        {
+                            "fields": fields,
+                            "context": {"allowed_company_ids": [c_id]}
+                        }
+                    )
+                    futures[future] = c_id
+
+                # Query for no-company sale orders
+                no_company_future = executor.submit(
+                    self.client.search_read,
+                    "sale.order",
+                    [["date_order", ">=", date_from], ["company_id", "=", False]],
+                    fields,
+                )
+                futures[no_company_future] = False
+
+                for future in as_completed(futures):
+                    comp_identifier = futures[future]
+                    try:
+                        res = future.result()
+                        if res:
+                            sale_orders.extend(res)
+                    except Exception as e:
+                        logger.error(f"Failed to fetch sale orders for company {comp_identifier}: {e}")
+
+        # Deduplicate all fetched sale orders by id
+        seen_ids = set()
+        dedup_sale_orders = []
+        for order in sale_orders:
+            if order["id"] not in seen_ids:
+                seen_ids.add(order["id"])
+                dedup_sale_orders.append(order)
+        
         # Filter out sale orders owned by the excluded Hai Yen sales account.
         return [
-            order for order in sale_orders
+            order for order in dedup_sale_orders
             if not self._is_excluded_salesperson(order)
         ]
+
+    def _sale_order_matches_company(self, order: dict[str, Any], company_key: str) -> bool:
+        detected_key = self._company_key_from_ref(order.get("company_id"))
+        if detected_key is None:
+            return True
+        return detected_key == company_key
 
     @staticmethod
     def _is_excluded_salesperson(order: dict[str, Any]) -> bool:
@@ -225,17 +348,193 @@ class DashboardService:
     def _get_projects_for_sale_orders(self, sale_order_ids: list[int]) -> list[dict[str, Any]]:
         if not sale_order_ids:
             return []
-        return self.client.search_read(
+        return self.client.call_method(
             "project.project",
-            [["sale_order_id", "in", sale_order_ids]],
-            ["id", "name", "partner_id", "sale_order_id"],
+            "search_read",
+            [[["sale_order_id", "in", sale_order_ids]]],
+            {
+                "fields": ["id", "name", "partner_id", "sale_order_id", "account_id", "company_id", "active"],
+                "context": {"active_test": False},
+            },
         )
+
+    def _build_dashboard_analytic_adjustments(
+        self,
+        projects: list[dict[str, Any]],
+        sale_orders_by_id: dict[int, dict[str, Any]],
+    ) -> dict[int, dict[str, Any]]:
+        adjustments = {
+            project["id"]: {
+                "foreign_cost_removed": Decimal("0"),
+                "foreign_cost_added": Decimal("0"),
+            }
+            for project in projects
+        }
+        project_by_sale_order_id = {
+            relation_id(project.get("sale_order_id")): project
+            for project in projects
+            if relation_id(project.get("sale_order_id"))
+        }
+        project_by_account_id = {
+            relation_id(project.get("account_id")): project
+            for project in projects
+            if relation_id(project.get("account_id"))
+        }
+        foreign_account_sources = self._find_foreign_analytic_account_sources(
+            sale_orders_by_id,
+            project_by_sale_order_id,
+        )
+        self._apply_foreign_invoice_cost_adjustments(
+            project_by_account_id,
+            project_by_sale_order_id,
+            adjustments,
+            foreign_account_sources,
+        )
+        return adjustments
+
+    def _find_foreign_analytic_account_sources(
+        self,
+        sale_orders_by_id: dict[int, dict[str, Any]],
+        project_by_sale_order_id: dict[int | None, dict[str, Any]],
+    ) -> dict[int, set[int]]:
+        sale_order_ids = sorted(sale_orders_by_id)
+        if not sale_order_ids:
+            return {}
+        foreign_account_sources: dict[int, set[int]] = defaultdict(set)
+        lines = self.client.search_read(
+            "sale.order.line",
+            [["order_id", "in", sale_order_ids]],
+            ["id", "name", "order_id", "price_subtotal", "analytic_distribution"],
+            limit=0,
+        )
+        for line in lines:
+            sale_order_id = relation_id(line.get("order_id"))
+            project = project_by_sale_order_id.get(sale_order_id)
+            expected_account_id = relation_id(project.get("account_id")) if project else None
+            if not project or not expected_account_id:
+                continue
+            distribution = line.get("analytic_distribution")
+            if not isinstance(distribution, dict):
+                continue
+            for raw_account_id, percent in distribution.items():
+                if abs(as_decimal(line.get("price_subtotal")) * as_decimal(percent) / Decimal("100")) < TWO_DECIMALS:
+                    continue
+                account_ids = self._parse_analytic_account_ids(raw_account_id)
+                if not account_ids or expected_account_id in account_ids:
+                    continue
+                for account_id in account_ids:
+                    foreign_account_sources[account_id].add(sale_order_id)
+        return foreign_account_sources
+
+    def _apply_foreign_invoice_cost_adjustments(
+        self,
+        project_by_account_id: dict[int | None, dict[str, Any]],
+        project_by_sale_order_id: dict[int | None, dict[str, Any]],
+        adjustments: dict[int, dict[str, Any]],
+        foreign_account_sources: dict[int, set[int]] | None = None,
+    ) -> None:
+        account_ids = sorted(
+            set(account_id for account_id in project_by_account_id if account_id)
+            | set((foreign_account_sources or {}).keys())
+        )
+        if not account_ids:
+            return
+        analytic_entries = self.client.search_read(
+            "account.analytic.line",
+            [["account_id", "in", account_ids], ["category", "=", "invoice"]],
+            ["id", "name", "amount", "account_id", "move_line_id", "product_id", "category"],
+            limit=1000,
+        )
+        move_line_ids = sorted(
+            {
+                relation_id(entry.get("move_line_id"))
+                for entry in analytic_entries
+                if relation_id(entry.get("move_line_id"))
+            }
+        )
+        if not move_line_ids:
+            return
+        move_lines = self.client.search_read(
+            "account.move.line",
+            [["id", "in", move_line_ids]],
+            ["id", "name", "move_id", "sale_line_ids", "product_id"],
+            limit=len(move_line_ids),
+        )
+        move_line_map = {line["id"]: line for line in move_lines}
+        sale_line_ids = sorted(
+            {
+                sale_line_id
+                for line in move_lines
+                for sale_line_id in self._extract_relation_ids(line.get("sale_line_ids"))
+            }
+        )
+        if not sale_line_ids:
+            return
+        sale_lines = self.client.search_read(
+            "sale.order.line",
+            [["id", "in", sale_line_ids]],
+            ["id", "order_id", "name"],
+            limit=len(sale_line_ids),
+        )
+        sale_line_order_map = {line["id"]: relation_id(line.get("order_id")) for line in sale_lines}
+
+        for entry in analytic_entries:
+            amount = as_decimal(entry.get("amount"))
+            if amount >= -TWO_DECIMALS:
+                continue
+            account_id = relation_id(entry.get("account_id"))
+            target_project = project_by_account_id.get(account_id)
+            target_sale_order_id = relation_id(target_project.get("sale_order_id")) if target_project else None
+            move_line = move_line_map.get(relation_id(entry.get("move_line_id")) or 0)
+            if not move_line:
+                continue
+            source_order_ids = {
+                sale_line_order_map.get(sale_line_id)
+                for sale_line_id in self._extract_relation_ids(move_line.get("sale_line_ids"))
+            }
+            source_order_ids.discard(None)
+            if target_sale_order_id:
+                foreign_order_ids = sorted(order_id for order_id in source_order_ids if order_id != target_sale_order_id)
+            else:
+                foreign_order_ids = sorted(source_order_ids)
+            if not foreign_order_ids:
+                continue
+
+            cost_amount = -amount
+            if target_project and target_project["id"] in adjustments:
+                target_adjustment = adjustments[target_project["id"]]
+                target_adjustment["foreign_cost_removed"] += cost_amount
+
+            for foreign_order_id in foreign_order_ids:
+                source_project = project_by_sale_order_id.get(foreign_order_id)
+                if not source_project or source_project["id"] not in adjustments:
+                    continue
+                source_adjustment = adjustments[source_project["id"]]
+                source_adjustment["foreign_cost_added"] += cost_amount
+
+    def _parse_analytic_account_ids(self, value: Any) -> set[int]:
+        if value is None:
+            return set()
+        values = value if isinstance(value, (list, tuple, set)) else str(value).split(",")
+        account_ids: set[int] = set()
+        for raw_value in values:
+            text = str(raw_value).strip()
+            digits = []
+            for char in text:
+                if not char.isdigit():
+                    break
+                digits.append(char)
+            if not digits:
+                continue
+            account_ids.add(int("".join(digits)))
+        return account_ids
 
     def _build_projects_dashboard_row(
         self,
         project: dict[str, Any],
         sale_orders_by_id: dict[int, dict[str, Any]],
         tag_map: dict[int, list[str]],
+        analytic_adjustments: dict[int, dict[str, Any]],
     ) -> dict[str, Any]:
         sale_order_id = relation_id(project.get("sale_order_id"))
         sale_order = sale_orders_by_id.get(sale_order_id or 0, {})
@@ -243,11 +542,20 @@ class DashboardService:
         native_expected_cost = as_decimal(
             self._get_profitability_costs(project["id"])["expected_cost_total"]
         )
-        gp_amount = bg_untaxed - native_expected_cost
+        adjustments = analytic_adjustments.get(project["id"], {})
+        foreign_cost_removed = as_decimal(adjustments.get("foreign_cost_removed"))
+        foreign_cost_added = as_decimal(adjustments.get("foreign_cost_added"))
+        cost_adjustment_amount = foreign_cost_removed - foreign_cost_added
+        adjusted_expected_cost = native_expected_cost - foreign_cost_removed + foreign_cost_added
+        gp_amount = bg_untaxed - adjusted_expected_cost
         gp_percent = None
         if bg_untaxed > 0:
             gp_percent = as_money((gp_amount / bg_untaxed) * Decimal("100"))
-
+        company_key = (
+            self._company_key_from_ref(sale_order.get("company_id"))
+            or self._company_key_from_ref(project.get("company_id"))
+            or ""
+        )
         return {
             "project_id": project["id"],
             "project_name": project.get("name") or "",
@@ -255,10 +563,17 @@ class DashboardService:
             "sale_order_name": sale_order.get("name") or relation_name(project.get("sale_order_id")),
             "customer": relation_name(sale_order.get("partner_id")) or relation_name(project.get("partner_id")),
             "date_order": sale_order.get("date_order"),
+            "company_key": company_key,
+            "company_name": relation_name(sale_order.get("company_id")) or relation_name(project.get("company_id")) or "",
             "tags": tag_map.get(sale_order_id or 0, []),
             "order_state": sale_order.get("x_studio_selection_field_q4_1imrcsjj8") or "",
+            "project_active": bool(project.get("active", True)),
             "bg_untaxed": as_money(bg_untaxed),
             "native_expected_cost": as_money(native_expected_cost),
+            "adjusted_expected_cost": as_money(adjusted_expected_cost),
+            "cost_adjustment_amount": as_money(cost_adjustment_amount),
+            "cost_removed_amount": as_money(foreign_cost_removed),
+            "cost_added_amount": as_money(foreign_cost_added),
             "gp_amount": as_money(gp_amount),
             "gp_percent": gp_percent,
         }
@@ -266,8 +581,10 @@ class DashboardService:
     def _build_projects_dashboard_summary(self, rows: list[dict[str, Any]]) -> dict[str, Any]:
         valid_rows = [row for row in rows if as_decimal(row["bg_untaxed"]) > 0]
         bg_total = sum(as_decimal(row["bg_untaxed"]) for row in valid_rows)
-        expected_cost_total = sum(as_decimal(row["native_expected_cost"]) for row in valid_rows)
-        gp_total = bg_total - expected_cost_total
+        native_cost_total = sum(as_decimal(row["native_expected_cost"]) for row in valid_rows)
+        adjusted_cost_total = sum(as_decimal(row.get("adjusted_expected_cost", row["native_expected_cost"])) for row in valid_rows)
+        adjustment_total = sum(as_decimal(row.get("cost_adjustment_amount")) for row in valid_rows)
+        gp_total = bg_total - adjusted_cost_total
         weighted_gp_percent = Decimal("0")
         if bg_total > 0:
             weighted_gp_percent = (gp_total / bg_total) * Decimal("100")
@@ -276,7 +593,9 @@ class DashboardService:
             "total_projects": len(rows),
             "valid_project_count": len(valid_rows),
             "total_bg_untaxed": as_money(bg_total),
-            "total_native_expected_cost": as_money(expected_cost_total),
+            "total_native_expected_cost": as_money(native_cost_total),
+            "total_adjusted_expected_cost": as_money(adjusted_cost_total),
+            "total_cost_adjustment_amount": as_money(adjustment_total),
             "total_gp_amount": as_money(gp_total),
             "weighted_gp_percent": as_money(weighted_gp_percent),
         }
@@ -286,14 +605,19 @@ class DashboardService:
         rows: list[dict[str, Any]],
         done_rows: list[dict[str, Any]],
         date_from: str,
+        company_key: str,
     ) -> dict[str, Any]:
         valid_done_rows = [row for row in done_rows if as_decimal(row["bg_untaxed"]) > 0]
         state_counts = Counter(row.get("order_state") or "No state" for row in rows)
-
+        archived_rows = [row for row in rows if row.get("project_active") is False]
         return {
             "date_field": "sale.order.date_order",
+            "company": self._company_payload(company_key),
+            "odoo_url": self.client.url,
             "project_scope": "all_order_states",
+            "project_active_scope": "active_and_archived",
             "summary_scope": "done_only",
+            "cost_scope": "adjusted_expected_cost",
             "target_tags": list(DASHBOARD_TARGET_TAGS),
             "excluded_salespersons": list(EXCLUDED_SALESPERSONS),
             "counts": {
@@ -301,6 +625,7 @@ class DashboardService:
                 "done_projects": len(done_rows),
                 "valid_done_projects": len(valid_done_rows),
                 "non_done_projects": len(rows) - len(done_rows),
+                "archived_projects": len(archived_rows),
             },
             "state_counts": dict(sorted(state_counts.items())),
             "date_from": date_from,
@@ -313,6 +638,7 @@ class DashboardService:
                     "count": 0,
                     "bg_untaxed": Decimal("0"),
                     "native_expected_cost": Decimal("0"),
+                    "adjusted_expected_cost": Decimal("0"),
                     "gp_amount": Decimal("0"),
                     "weighted_gp_percent": None,
                 }
@@ -326,6 +652,7 @@ class DashboardService:
             if bg_untaxed <= 0:
                 continue
             native_expected_cost = as_decimal(row["native_expected_cost"])
+            adjusted_expected_cost = as_decimal(row.get("adjusted_expected_cost", row["native_expected_cost"]))
             tier = self._tier_for_amount(bg_untaxed)
             for tag in row.get("tags", []):
                 if tag not in buckets:
@@ -334,7 +661,8 @@ class DashboardService:
                 bucket["count"] += 1
                 bucket["bg_untaxed"] += bg_untaxed
                 bucket["native_expected_cost"] += native_expected_cost
-                bucket["gp_amount"] += bg_untaxed - native_expected_cost
+                bucket["adjusted_expected_cost"] += adjusted_expected_cost
+                bucket["gp_amount"] += bg_untaxed - adjusted_expected_cost
 
         return {
             tag: {
@@ -355,6 +683,7 @@ class DashboardService:
             "count": int(bucket["count"]),
             "bg_untaxed": as_money(bg_untaxed),
             "native_expected_cost": as_money(as_decimal(bucket["native_expected_cost"])),
+            "adjusted_expected_cost": as_money(as_decimal(bucket.get("adjusted_expected_cost", bucket["native_expected_cost"]))),
             "gp_amount": as_money(gp_amount),
             "weighted_gp_percent": weighted_gp_percent,
         }
@@ -384,7 +713,7 @@ class DashboardService:
                 ranges.items(),
                 key=lambda item: (item[1]["count"], item[1]["bg_untaxed"]),
                 reverse=True,
-            )[:3]
+            )
             ranks[tag] = [
                 {
                     "rank": index + 1,
@@ -404,6 +733,8 @@ class DashboardService:
 
     def _gp_range_label(self, gp_percent: Decimal) -> str:
         val = int(gp_percent)
+        if val < 0:
+            return "<0%"
         if val <= 20:
             return "0-20%"
         if val <= 40:
@@ -701,11 +1032,15 @@ class DashboardService:
         }
 
     def _get_project(self, project_id: int) -> dict[str, Any]:
-        projects = self.client.search_read(
+        projects = self.client.call_method(
             "project.project",
-            [["id", "=", project_id]],
-            ["id", "name", "allow_timesheets", "partner_id", "sale_order_id", "account_id"],
-            limit=1,
+            "search_read",
+            [[["id", "=", project_id]]],
+            {
+                "fields": ["id", "name", "allow_timesheets", "partner_id", "sale_order_id", "account_id", "active"],
+                "context": {"active_test": False},
+                "limit": 1,
+            },
         )
         if not projects:
             raise OdooAPIError(
@@ -1172,8 +1507,11 @@ class DashboardService:
         if not distribution:
             return False
         if isinstance(distribution, dict):
-            return str(account_id) in {str(key) for key in distribution}
-        return str(account_id) in str(distribution)
+            return any(
+                account_id in self._parse_analytic_account_ids(key)
+                for key in distribution
+            )
+        return account_id in self._parse_analytic_account_ids(distribution)
 
     def _convert_to_company_currency(
         self,

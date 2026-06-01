@@ -137,6 +137,7 @@ export function renderTagLeaderboard(tagBuckets) {
         const rankClass = rank === 1 ? 'rank-1' : rank === 2 ? 'rank-2' : rank === 3 ? 'rank-3' : 'rank-standard';
         const div = document.createElement('div');
         div.className = `leaderboard-item ${rankClass}`;
+        div.style.cursor = 'pointer';
         div.innerHTML = `
             <div class="leaderboard-rank">${rank}</div>
             <div class="leaderboard-info">
@@ -148,6 +149,20 @@ export function renderTagLeaderboard(tagBuckets) {
                 <div class="leaderboard-kpi-sub">Weighted GP</div>
             </div>
         `;
+        
+        div.addEventListener('click', () => {
+            const tagFilter = document.getElementById('tagFilter');
+            if (tagFilter) {
+                tagFilter.value = item.tag;
+            }
+            state.pendingUIState.tag = item.tag;
+            state.gpRangeFilter = null;
+
+            applyFilters();
+
+            window.location.hash = '#/projects';
+        });
+
         fragment.appendChild(div);
     });
     container.appendChild(fragment);

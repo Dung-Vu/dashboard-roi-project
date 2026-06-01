@@ -39,6 +39,59 @@ Mục tiêu chính của repo này là: vẫn dùng Odoo làm nguồn raw data, 
 
 4. Mở trình duyệt ở `http://localhost:5056`.
 
+## Chạy bằng Docker Desktop trong LAN
+
+`.env` chỉ được nạp vào container lúc chạy qua `env_file`; file này bị loại khỏi build context bởi `.dockerignore` nên secret không bị copy vào image hoặc bundle frontend.
+
+SQLite cache được lưu trong Docker volume `dashboard_cache` tại `/app/data/cache.db`. Cache này giúp lần tải sau nhanh hơn và vẫn còn sau khi container bị recreate hoặc image được rebuild. File `.cache.db` local không được copy vào image vì có thể chứa dữ liệu nghiệp vụ từ Odoo.
+
+1. Điền `.env` theo `.env.example`, giữ `DEBUG=0`.
+
+2. Build và chạy container:
+
+    ```powershell
+    docker compose up --build -d
+    ```
+
+3. Kiểm tra container:
+
+    ```powershell
+    docker compose ps
+    docker compose logs -f dashboard
+    ```
+
+4. Lấy IPv4 của máy đang chạy Docker Desktop:
+
+    ```powershell
+    ipconfig
+    ```
+
+5. Máy khác cùng mạng LAN truy cập:
+
+    ```text
+    http://<IPv4-cua-may-chay-Docker>:5056
+    ```
+
+    Trên máy hiện tại, IPv4 LAN đang là `192.168.1.178`, nên URL là:
+
+    ```text
+    http://192.168.1.178:5056
+    ```
+
+Nếu Windows Firewall chặn truy cập từ máy khác, mở inbound rule cho TCP `5056` trên network private:
+
+```powershell
+New-NetFirewallRule -DisplayName "Dashboard ROI LAN 5056" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 5056 -Profile Private
+```
+
+Nếu đổi port, sửa `PORT` trong `.env`, rồi chạy lại:
+
+```powershell
+docker compose up --build -d
+```
+
+Không thêm biến có tiền tố client-side như `VITE_`, `NEXT_PUBLIC_`, hoặc ghi nội dung `.env` vào `index.html`/`app.js`. Frontend hiện chỉ gọi API cùng origin qua `API_BASE = ''`.
+
 ## Multi-project dashboard
 
 Endpoint chính:

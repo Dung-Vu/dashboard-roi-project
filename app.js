@@ -13,7 +13,7 @@ import {
     updateSelectAllState,
     applySorting
 } from './assets/js/components/table.js';
-import { DEFAULT_DATE_FROM, ITEMS_PER_PAGE } from './assets/js/config.js';
+import { DEFAULT_COMPANY, DEFAULT_DATE_FROM, ITEMS_PER_PAGE } from './assets/js/config.js';
 
 // ===== SPA Router =====
 function handleRouting() {
@@ -122,7 +122,10 @@ async function loadDashboard(refresh = false) {
     try {
         const dateFrom = dateFromInput ? dateFromInput.value : '';
         const selectedDateFrom = dateFrom || DEFAULT_DATE_FROM;
-        state.dashboardData = await fetchDashboard(selectedDateFrom, refresh);
+        const companySelector = document.getElementById('companySelector');
+        const selectedCompany = companySelector ? companySelector.value : (state.company || DEFAULT_COMPANY);
+        state.company = selectedCompany;
+        state.dashboardData = await fetchDashboard(selectedDateFrom, selectedCompany, refresh);
         if (dateFromInput) dateFromInput.value = state.dashboardData.date_from || selectedDateFrom;
         if (state.gpChart) {
             state.gpChart.destroy();
@@ -191,6 +194,14 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('dateFrom')?.addEventListener('change', () => {
         saveUIState();
         loadDashboard(true);
+    });
+
+    document.getElementById('companySelector')?.addEventListener('change', (event) => {
+        state.company = event.target.value || DEFAULT_COMPANY;
+        state.currentPage = 1;
+        state.selectedProjects.clear();
+        saveUIState();
+        loadDashboard(false);
     });
 
     const debouncedApplyFilters = debounce(applyFilters, 300);

@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import time
 from pathlib import Path
 from threading import Lock
 
 
-CACHE_DB_PATH = Path(__file__).parent / ".cache.db"
+CACHE_DB_PATH = Path(os.getenv("CACHE_DB_PATH", Path(__file__).parent / ".cache.db"))
 DEFAULT_TTL_SECONDS = 3600  # 1 hour - balance giữa performance và freshness
 
 
@@ -17,6 +18,7 @@ class PersistentCache:
         self.db_path = db_path or CACHE_DB_PATH
         self.ttl = ttl
         self._lock = Lock()
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
 
     def _init_db(self):

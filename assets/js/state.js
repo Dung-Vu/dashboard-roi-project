@@ -1,4 +1,4 @@
-import { UI_STATE_KEY } from './config.js';
+import { DEFAULT_COMPANY, UI_STATE_KEY } from './config.js';
 import { getElementValue } from './utils.js';
 
 export const state = {
@@ -12,7 +12,9 @@ export const state = {
     currentAbortController: null,
     sortColumn: null,
     sortDirection: 'asc',
-    pendingUIState: {}
+    company: DEFAULT_COMPANY,
+    pendingUIState: {},
+    gpRangeFilter: null
 };
 
 export function loadUIState() {
@@ -30,9 +32,11 @@ export function saveUIState() {
         tag: getElementValue('tagFilter'),
         state: getElementValue('stateFilter'),
         health: getElementValue('healthFilter'),
+        company: getElementValue('companySelector') || state.company,
         sortColumn: state.sortColumn,
         sortDirection: state.sortDirection,
         route: location.hash || '#/overview',
+        gpRangeFilter: state.gpRangeFilter,
     };
     state.pendingUIState = saved;
     try {
@@ -55,8 +59,14 @@ export function applySavedUIState() {
     if (searchInput && state.pendingUIState.search) {
         searchInput.value = state.pendingUIState.search;
     }
+    const companySelector = document.getElementById('companySelector');
+    state.company = state.pendingUIState.company || DEFAULT_COMPANY;
+    if (companySelector) {
+        companySelector.value = state.company;
+    }
     state.sortColumn = state.pendingUIState.sortColumn || null;
     state.sortDirection = state.pendingUIState.sortDirection === 'desc' ? 'desc' : 'asc';
+    state.gpRangeFilter = state.pendingUIState.gpRangeFilter || null;
 }
 
 export function applyPendingFilterSelections() {

@@ -14,6 +14,7 @@ class FakeOdooClient:
         self.panels = panels or {}
         self.field_relations = field_relations or {}
         self.calls = []
+        self.url = "http://localhost:8069"
 
     def search_read(self, model, domain, fields=None, limit=0, offset=0):
         self.calls.append(("search_read", model, domain, fields))
@@ -27,6 +28,11 @@ class FakeOdooClient:
 
     def call_method(self, model, method, args=None, kwargs=None):
         self.calls.append(("call_method", model, method, args))
+        if method == "search_read":
+            domain = args[0] if args else []
+            fields = (kwargs or {}).get("fields")
+            limit = (kwargs or {}).get("limit", 0)
+            return self.search_read(model, domain, fields, limit=limit)
         if model == "res.currency" and method == "_convert":
             currency_id = args[0][0]
             amount = Decimal(str(args[1]))
@@ -188,6 +194,13 @@ class CostPipelineTest(unittest.TestCase):
 
         self.assertEqual(sources[0]["amount"], Decimal("2960000"))
 
+    def test_analytic_distribution_match_accepts_combined_account_key(self):
+        service = DashboardService(FakeOdooClient())
+
+        self.assertTrue(service._analytic_distribution_matches({"1265,1581": 100}, 1581))
+        self.assertTrue(service._analytic_distribution_matches({"1265,1581": 100}, 1265))
+        self.assertFalse(service._analytic_distribution_matches({"1265,1581": 100}, 1141))
+
     def test_posted_vendor_bill_is_actual_not_commitment(self):
         client = FakeOdooClient(
             {
@@ -295,7 +308,7 @@ class ProjectsDashboardTest(unittest.TestCase):
 
         payload = service.build_projects_dashboard("2026-01-01", refresh=True)
 
-        self.assertEqual(set(payload.keys()), {"projects", "summary", "tag_buckets", "tag_gp_ranks", "meta", "date_from", "fetched_at"})
+        self.assertEqual(set(payload.keys()), {"projects", "summary", "tag_buckets", "tag_gp_ranks", "meta", "date_from", "company", "fetched_at"})
         self.assertEqual(len(payload["projects"]), 3)
         self.assertEqual(payload["summary"]["total_projects"], 3)
         self.assertEqual(payload["summary"]["valid_project_count"], 2)
@@ -351,6 +364,142 @@ class ProjectsDashboardTest(unittest.TestCase):
         self.assertEqual(ranks["Rèm"][0]["range"], "51-55%")
         self.assertEqual(ranks["Rèm"][0]["count"], 2)
         self.assertEqual(ranks["Rèm"][1]["range"], "46-50%")
+
+    def test_projects_dashboard_multi_company_sync(self):
+        client = FakeOdooClient(
+            records={
+                "res.company": [
+                    {"id": 1, "name": "Bonario", "active": True},
+                    {"id": 2, "name": "Ordinaire", "active": True},
+                ],
+                "sale.order": [
+                    {
+                        "id": 10,
+                        "name": "SO001",
+                        "partner_id": [1, "Client A"],
+                        "date_order": "2026-01-02 09:00:00",
+                        "amount_untaxed": 100_000_000,
+                        "x_sale_order_tag_ids": [101],
+                        "x_studio_selection_field_q4_1imrcsjj8": "Done",
+                        "company_id": [1, "Bonario"],
+                    },
+                    {
+                        "id": 11,
+                        "name": "SO002",
+                        "partner_id": [2, "Client B"],
+                        "date_order": "2026-02-03 09:00:00",
+                        "amount_untaxed": 200_000_000,
+                        "x_sale_order_tag_ids": [101],
+                        "x_studio_selection_field_q4_1imrcsjj8": "Done",
+                        "company_id": [2, "Ordinaire"],
+                    },
+                ],
+                "project.project": [
+                    {"id": 100, "name": "Project Bonario", "partner_id": [1, "Client A"], "sale_order_id": [10, "SO001"], "company_id": [1, "Bonario"]},
+                    {"id": 101, "name": "Project Ordinaire", "partner_id": [2, "Client B"], "sale_order_id": [11, "SO002"], "company_id": [2, "Ordinaire"]},
+                ],
+                "crm.tag": [
+                    {"id": 101, "name": "Nội thất rời"},
+                ],
+            },
+            panels={
+                100: {"profitability_items": {"costs": {"data": [{"id": "cost", "billed": -60_000_000, "to_bill": 0}]}}},
+                101: {"profitability_items": {"costs": {"data": [{"id": "cost", "billed": -100_000_000, "to_bill": 0}]}}},
+            },
+            field_relations={("sale.order", "x_sale_order_tag_ids"): "crm.tag"},
+        )
+        service = DashboardService(client)
+
+        # Build dashboard for "bonario" company
+        payload = service.build_projects_dashboard("2026-01-01", company="bonario", refresh=True)
+
+        # 1. Assert projects filters correctly by company_key
+        self.assertEqual(len(payload["projects"]), 1)
+        self.assertEqual(payload["projects"][0]["project_id"], 100)
+        self.assertEqual(payload["projects"][0]["company_key"], "bonario")
+
+        # 2. Assert summary is calculated only on the selected company's projects
+        self.assertEqual(payload["summary"]["total_projects"], 1)
+        self.assertEqual(payload["summary"]["valid_project_count"], 1)
+        self.assertEqual(payload["summary"]["total_bg_untaxed"], 100_000_000.0)
+        self.assertEqual(payload["summary"]["total_native_expected_cost"], 60_000_000.0)
+        self.assertEqual(payload["summary"]["total_adjusted_expected_cost"], 60_000_000.0)
+        self.assertEqual(payload["summary"]["total_gp_amount"], 40_000_000.0)
+        self.assertEqual(payload["summary"]["weighted_gp_percent"], 40.0)
+
+        # 3. Assert tag_buckets and tag_gp_ranks aggregate projects from all companies combined
+        # Bonario project: 100M untaxed -> 100-200tr tier
+        # Ordinaire project: 200M untaxed -> >200tr tier
+        self.assertEqual(payload["tag_buckets"]["Nội thất rời"]["100-200tr"]["count"], 1)
+        self.assertEqual(payload["tag_buckets"]["Nội thất rời"]["100-200tr"]["bg_untaxed"], 100_000_000.0)
+        self.assertEqual(payload["tag_buckets"]["Nội thất rời"][">200tr"]["count"], 1)
+        self.assertEqual(payload["tag_buckets"]["Nội thất rời"][">200tr"]["bg_untaxed"], 200_000_000.0)
+
+        # Tag GP ranks: should have ranks from all companies combined
+        # Bonario project GP% is 40.0% -> range "21-40%"
+        # Ordinaire project GP% is 50.0% -> range "46-50%"
+        ranks = payload["tag_gp_ranks"]["Nội thất rời"]
+        self.assertEqual(len(ranks), 2)
+        ranges = {r["range"] for r in ranks}
+        self.assertIn("21-40%", ranges)
+        self.assertIn("46-50%", ranges)
+
+    def test_combined_analytic_distribution_key_does_not_adjust_cost_when_project_account_is_present(self):
+        client = FakeOdooClient(
+            records={
+                "sale.order": [
+                    {
+                        "id": 2594,
+                        "name": "BG-202506-2392",
+                        "partner_id": [1, "Client A"],
+                        "date_order": "2026-04-15 09:21:23",
+                        "amount_untaxed": 65_634_541,
+                        "x_sale_order_tag_ids": [101],
+                        "x_studio_selection_field_q4_1imrcsjj8": "Done",
+                        "company_id": [1, "Bonario"],
+                    },
+                ],
+                "project.project": [
+                    {
+                        "id": 1481,
+                        "name": "BG-202506-2392 - Template - BG VLDT",
+                        "partner_id": [1, "Client A"],
+                        "sale_order_id": [2594, "BG-202506-2392"],
+                        "account_id": [1581, "BG-202506-2392"],
+                        "company_id": [1, "Bonario"],
+                        "active": True,
+                    },
+                ],
+                "sale.order.line": [
+                    {
+                        "id": 15203,
+                        "name": "Wallpaper",
+                        "order_id": [2594, "BG-202506-2392"],
+                        "price_subtotal": 4_704_000,
+                        "analytic_distribution": {"1265,1581": 100},
+                    },
+                ],
+                "account.analytic.line": [],
+                "crm.tag": [
+                    {"id": 101, "name": "Nội thất rời"},
+                ],
+            },
+            panels={
+                1481: {"profitability_items": {"costs": {"data": [{"id": "cost", "billed": -25_366_300, "to_bill": 0}]}}},
+            },
+            field_relations={("sale.order", "x_sale_order_tag_ids"): "crm.tag"},
+        )
+        service = DashboardService(client)
+
+        payload = service.build_projects_dashboard("2026-01-01", company="bonario", refresh=True)
+        row = payload["projects"][0]
+
+        self.assertNotIn("has_analytic_mismatch", row)
+        self.assertNotIn("data_quality_notes", row)
+        self.assertEqual(row["native_expected_cost"], 25_366_300)
+        self.assertEqual(row["adjusted_expected_cost"], 25_366_300)
+        self.assertEqual(row["cost_added_amount"], 0)
+        self.assertEqual(row["cost_removed_amount"], 0)
 
 
 if __name__ == "__main__":

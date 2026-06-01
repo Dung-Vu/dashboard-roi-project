@@ -7,7 +7,7 @@ export function renderKPIs(summary) {
     document.getElementById('validProjects').textContent =
         `${summary.valid_project_count} dự án hợp lệ`;
     document.getElementById('totalBG').textContent = formatVND(summary.total_bg_untaxed);
-    document.getElementById('totalCost').textContent = formatVND(summary.total_native_expected_cost);
+    document.getElementById('totalCost').textContent = formatVND(summary.total_adjusted_expected_cost ?? summary.total_native_expected_cost);
     document.getElementById('totalGP').textContent = formatVND(summary.total_gp_amount);
 
     const weightedGP = document.getElementById('weightedGP');
@@ -55,4 +55,5 @@ export function renderScopeBar() {
     setText('scopeDoneCount', counts.done_projects ?? state.dashboardData?.summary?.total_projects ?? 0);
     setText('scopeValidDoneCount', counts.valid_done_projects ?? state.dashboardData?.summary?.valid_project_count ?? 0);
     setText('scopeDateFrom', meta.date_from || state.dashboardData?.date_from || DEFAULT_DATE_FROM);
+    setText('scopeCompany', meta.company?.label || state.dashboardData?.company?.label || '-');
 }

@@ -1,5 +1,10 @@
 export const API_BASE = '';
 export const DEFAULT_DATE_FROM = '2026-01-01';
+export const DEFAULT_COMPANY = 'bonario';
+export const COMPANY_OPTIONS = [
+    { key: 'bonario', label: 'Bonario' },
+    { key: 'ordinaire', label: 'Ordinaire' },
+];
 export const GP_HEALTH_HIGH = 40;
 export const GP_HEALTH_MEDIUM = 15;
 export const UI_STATE_KEY = 'bonario-roi-dashboard-ui-v2';
@@ -24,7 +29,7 @@ export const SORTABLE_COLUMNS = [
     { key: 'project_name', label: 'Dự án' },
     { key: 'customer', label: 'Khách hàng' },
     { key: 'bg_untaxed', label: 'Doanh thu' },
-    { key: 'native_expected_cost', label: 'Chi phí' },
+    { key: 'adjusted_expected_cost', label: 'Chi phí' },
     { key: 'gp_amount', label: 'GP' },
     { key: 'gp_percent', label: 'GP%' },
 ];

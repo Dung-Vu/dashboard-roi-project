@@ -58,7 +58,11 @@ def create_app() -> Flask:
 
     @app.get("/assets/<path:filename>")
     def serve_assets(filename):
-        return send_from_directory(BASE_DIR / "assets", filename)
+        response = send_from_directory(BASE_DIR / "assets", filename)
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        return response
 
     @app.get("/favicon.ico")
     def favicon():
@@ -66,11 +70,12 @@ def create_app() -> Flask:
 
     @app.get("/api/health")
     def health():
+        odoo_health = service.test_connection()
         return jsonify(
             {
                 "ok": True,
                 "default_project_id": settings.default_project_id,
-                "odoo": service.test_connection(),
+                "odoo": {"ok": bool(odoo_health.get("ok"))},
             }
         )
 
@@ -83,21 +88,27 @@ def create_app() -> Flask:
     @app.get("/api/projects-dashboard")
     def projects_dashboard():
         date_from = request.args.get("date_from", default="2026-01-01", type=str)
+        company = request.args.get("company", default="bonario", type=str)
         refresh = request.args.get("refresh", default="0") == "1"
-        payload = service.build_projects_dashboard(date_from, refresh=refresh)
+        payload = service.build_projects_dashboard(date_from, company=company, refresh=refresh)
         return jsonify(payload)
 
     @app.errorhandler(OdooAPIError)
     def handle_odoo_error(error: OdooAPIError):
-        return (
-            jsonify(
+        payload = {
+            "ok": False,
+            "error": "Cannot load dashboard data from Odoo",
+        }
+        if settings.debug:
+            payload.update(
                 {
-                    "ok": False,
                     "error": str(error),
                     "model": error.model,
                     "method": error.method,
                 }
-            ),
+            )
+        return (
+            jsonify(payload),
             502,
         )
 
@@ -106,7 +117,8 @@ def create_app() -> Flask:
         if isinstance(error, HTTPException):
             return error
         app.logger.exception("Unhandled error")
-        return jsonify({"ok": False, "error": str(error)}), 500
+        message = str(error) if settings.debug else "Internal server error"
+        return jsonify({"ok": False, "error": message}), 500
 
     return app
 

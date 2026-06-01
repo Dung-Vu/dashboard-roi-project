@@ -55,7 +55,7 @@ The Phase 2 Big Update introduces premium biophilic visual upgrades:
 | M2 | Security Sanitization | escapeHTML helper mapping dynamic inputs before rendering to prevent XSS payloads. | M1 | DONE |
 | M3 | Performance Optimization | DocumentFragment usage in renderProjectsTable and renderTagAnalysis for single DOM reflows. | M2 | DONE |
 
-### Phase 2: Aura Forest Theme 2.0 Big Update (Current)
+### Phase 2: Aura Forest Theme 2.0 Big Update (Completed)
 | # | Name | Scope | Dependencies | Status |
 |---|---|---|---|---|
 | M4 | Dynamic Biophilic BG | 4 glowing ambient orbs with free-flowing orbital paths + CPU-friendly biophilic floating particles. | M3 | DONE |
@@ -65,15 +65,31 @@ The Phase 2 Big Update introduces premium biophilic visual upgrades:
 | M8 | Sidebar Active Indicator | `.menu-indicator` vertical tracking slider utilizing cubic-bezier smooth transition. | M3 | DONE |
 | M9 | E2E Testing & Hardening | Opaque-box requirements verification and white-box challenger hardening. | M4-M8 | DONE |
 
+### Phase 3: Click-to-Odoo Integration (Completed)
+| # | Name | Scope | Dependencies | Status |
+|---|---|---|---|---|
+| M10 | Backend Odoo URL | Expose base `odoo_url` inside `/api/projects-dashboard` meta object. | None | DONE |
+| M11 | Clickable Link Frontend | Render `sale_order_name` as a clickable external anchor link targeting the Odoo Sale Order form. | M10 | DONE |
+| M12 | Aura Forest Aesthetic & QA | Apply `--color-emerald` premium styles with dashed hover borders and run pytest verification. | M11 | DONE |
+
+### Phase 4: Dashboard UI Upgrade & Performance Optimization (Current)
+| # | Name | Scope | Dependencies | Status |
+|---|---|---|---|---|
+| M13 | Backend GP% Bucketing Upgrade | Remove top-3 GP rank limit and add distinct negative GP% `<0%` category in `dashboard_service.py`. | None | DONE |
+| M14 | Frontend Charts & Sorting Repair | Fix X-axis sorting bug with regex integer parsing and implement consistent static tag color mapping by name in `charts.js` and `debug_combined.js`. | M13 | DONE |
+| M15 | CSS & HTML Animation Performance | Remove redundant `will-change` layer promotions, tune backdrop blur radii, and reduce floating particle count to 8. | M14 | DONE |
+| M16 | E2E Verification & Forensic Audit | Run pytest and verify integrity and steady 60 FPS performance via forensic audit checks. | M15 | DONE |
+
 ## Interface Contracts
 - `escapeHTML(str: string): string` - Safely escapes HTML special characters.
-- `renderProjectsTable(projects: Array<Project>): void` - Renders the project list dynamically using a single `DocumentFragment` write, including "Sức khỏe ROI" glowing bubble indicator.
+- `renderProjectsTable(projects: Array<Project>): void` - Renders the project list dynamically using a single `DocumentFragment` write, including "Sức khỏe ROI" glowing bubble indicator, and Click-to-Odoo anchor links.
 - `renderTagAnalysis(tagBuckets: Object, tagGPRanks: Object): void` - Renders tag contribution analysis.
 - `renderKPIs(summary: Object, projects: Array<Project>): void` - Renders total metric fields and updates embedded inline SVG sparklines representing trending GP%.
 - `renderGPChart(tagGPRanks: Object): void` - Renders GP% distribution chart using professional gradient fills.
 - `renderTagDoughnutChart(projects: Array<Project>): void` - Renders doughnut chart showing revenue contribution per tag category.
 - `renderTagLeaderboard(projects: Array<Project>): void` - Renders top performing tags with gold-leaf styled score ranks.
 - `updateSidebarIndicator(activeHash: string): void` - Sets offset transition for sidebar hover indicator.
+- `_build_projects_dashboard_meta(...) -> dict` - Construct backend meta payload including `odoo_url`.
 
 ## Code Layout
 - `/index.html`: Main HTML entry-point.

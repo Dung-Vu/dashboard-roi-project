@@ -1,0 +1,20 @@
+services:
+  dashboard:
+    build:
+      context: .
+    image: dashboard-roi-project:local
+    container_name: dashboard-roi-project
+    env_file:
+      - .env
+    environment:
+      PORT: "${PORT:-5056}"
+      DEBUG: "0"
+      CACHE_DB_PATH: "/app/data/cache.db"
+    volumes:
+      - dashboard_cache:/app/data
+    ports:
+      - "${PORT:-5056}:${PORT:-5056}"
+    restart: unless-stopped
+
+volumes:
+  dashboard_cache:

@@ -303,6 +303,38 @@ try {
     testsFailed++;
 }
 
+// TEST 6: Click-to-Odoo Hardening verification
+try {
+    const tbody = documentMock.getElementById('projectsTable');
+
+    // Scenario 1: Malicious odooUrl (quote breakout) and valid numeric sale_order_id
+    vm.runInContext('state.dashboardData = { meta: { odoo_url: \'https://odoo.com" onclick="alert(1)"\' } };', sandbox);
+
+    const validProject = [
+        { sale_order_id: 12345, sale_order_name: "SO_VALID", project_name: "Valid ID", customer: "A", tags: [], order_state: "Done", bg_untaxed: 100, native_expected_cost: 150, gp_amount: -50, gp_percent: -50 }
+    ];
+    tbody.innerHTML = '';
+    tbody.children = []; // Explicitly clear the mock DOM children array
+    sandbox.renderProjectsTable(validProject);
+    const row1HTML = tbody.children[0].innerHTML;
+    assert(row1HTML.includes('&quot; onclick=&quot;alert(1)&quot;'), "odoo_url quote breakout is properly HTML-escaped.");
+    assert(row1HTML.includes('id=12345&model=sale.order'), "sale_order_id is parsed and included as a valid number in href.");
+
+    // Scenario 2: Non-numeric sale_order_id
+    const invalidIdProject = [
+        { sale_order_id: "abc", sale_order_name: "SO_INVALID", project_name: "Invalid ID", customer: "B", tags: [], order_state: "Done", bg_untaxed: 100, native_expected_cost: 150, gp_amount: -50, gp_percent: -50 }
+    ];
+    tbody.innerHTML = '';
+    tbody.children = []; // Explicitly clear the mock DOM children array
+    sandbox.renderProjectsTable(invalidIdProject);
+    const row2HTML = tbody.children[0].innerHTML;
+    assert(row2HTML.includes('SO_INVALID') && !row2HTML.includes('class="odoo-link"'), "Non-numeric sale_order_id defaults to strong text and prevents link rendering.");
+
+} catch (err) {
+    console.error("[ERROR] Click-to-Odoo Hardening test threw:", err.stack);
+    testsFailed++;
+}
+
 console.log("--- Stress Testing Complete ---");
 console.log(`Summary: Passed ${testsPassed} assertions, Detected ${testsFailed} vulnerabilities/bugs.`);
 

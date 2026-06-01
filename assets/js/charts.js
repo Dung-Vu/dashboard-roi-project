@@ -1,5 +1,15 @@
 import { state } from './state.js';
 import { formatVND, formatPercent } from './utils.js';
+import { applyFilters } from './components/table.js';
+
+const TAG_COLORS = {
+    "Nội thất rời": { border: '#107850', start: 'rgba(16, 120, 80, 0.4)', end: 'rgba(16, 120, 80, 0.02)' },
+    "Giấy dán tường": { border: '#d97706', start: 'rgba(217, 119, 6, 0.4)', end: 'rgba(217, 119, 6, 0.02)' },
+    "Rèm": { border: '#0284c7', start: 'rgba(2, 132, 199, 0.4)', end: 'rgba(2, 132, 199, 0.02)' },
+    "Vải nội thất": { border: '#701a75', start: 'rgba(112, 26, 117, 0.4)', end: 'rgba(112, 26, 117, 0.02)' }
+};
+
+const DEFAULT_COLOR = { border: '#a3b899', start: 'rgba(163, 184, 153, 0.4)', end: 'rgba(163, 184, 153, 0.02)' };
 
 export function renderKPISparklines(projects) {
     document.querySelectorAll('.kpi-card').forEach(card => {
@@ -71,17 +81,12 @@ export function renderGPChart(tagGPRanks) {
         ranks.forEach(r => allRanges.add(r.range));
     });
     const sortedRanges = Array.from(allRanges).sort((a, b) => {
-        const aNum = parseInt(a.split('-')[0]);
-        const bNum = parseInt(b.split('-')[0]);
+        const aMatch = a.match(/(-?\d+)/);
+        const bMatch = b.match(/(-?\d+)/);
+        const aNum = aMatch ? parseInt(aMatch[0], 10) : 0;
+        const bNum = bMatch ? parseInt(bMatch[0], 10) : 0;
         return aNum - bNum;
     });
-
-    const colors = [
-        { border: '#107850', start: 'rgba(16, 120, 80, 0.4)', end: 'rgba(16, 120, 80, 0.02)' },
-        { border: '#00e699', start: 'rgba(0, 230, 153, 0.4)', end: 'rgba(0, 230, 153, 0.02)' },
-        { border: '#6b7f73', start: 'rgba(107, 127, 115, 0.4)', end: 'rgba(107, 127, 115, 0.02)' },
-        { border: '#2e7d32', start: 'rgba(46, 125, 50, 0.4)', end: 'rgba(46, 125, 50, 0.02)' }
-    ];
 
     const cachedGradients = {};
 
@@ -89,7 +94,7 @@ export function renderGPChart(tagGPRanks) {
         const ranks = tagGPRanks[tag] || [];
         const rankMap = {};
         ranks.forEach(r => { rankMap[r.range] = r.count; });
-        const themeColor = colors[index % colors.length];
+        const themeColor = TAG_COLORS[tag] || DEFAULT_COLOR;
 
         return {
             label: tag,
@@ -108,7 +113,7 @@ export function renderGPChart(tagGPRanks) {
             },
             borderColor: themeColor.border,
             borderWidth: 1.5,
-            borderRadius: 5,
+            borderRadius: 2,
             borderSkipped: false,
             hoverBackgroundColor: themeColor.border
         };
@@ -123,6 +128,33 @@ export function renderGPChart(tagGPRanks) {
         options: {
             responsive: true,
             maintainAspectRatio: false,
+            onClick: (evt, elements, chart) => {
+                if (elements && elements.length > 0) {
+                    const activeElement = elements[0];
+                    const datasetIndex = activeElement.datasetIndex;
+                    const index = activeElement.index;
+
+                    const dataset = chart.data.datasets[datasetIndex];
+                    const tag = dataset.label;
+                    const range = chart.data.labels[index];
+
+                    const tagFilter = document.getElementById('tagFilter');
+                    if (tagFilter) {
+                        tagFilter.value = tag;
+                    }
+                    state.pendingUIState.tag = tag;
+                    state.gpRangeFilter = range;
+
+                    applyFilters();
+
+                    window.location.hash = '#/projects';
+                }
+            },
+            onHover: (event, chartElement) => {
+                if (event.native && event.native.target) {
+                    event.native.target.style.cursor = chartElement.length ? 'pointer' : 'default';
+                }
+            },
             plugins: {
                 legend: {
                     position: 'top',
@@ -195,15 +227,13 @@ export function renderRevenueDoughnut(tagBuckets) {
         return { tag, revenue: tagBG };
     }).sort((a, b) => b.revenue - a.revenue);
 
-    const colors = ['#107850', '#00e699', '#6b7f73', '#2e7d32', '#a3b899'];
-
     state.revenueDoughnutChart = new Chart(ctx, {
         type: 'doughnut',
         data: {
             labels: tagRevenueData.map(d => d.tag),
             datasets: [{
                 data: tagRevenueData.map(d => d.revenue),
-                backgroundColor: colors.slice(0, tagRevenueData.length),
+                backgroundColor: tagRevenueData.map(d => (TAG_COLORS[d.tag] || DEFAULT_COLOR).border),
                 borderColor: '#ffffff',
                 borderWidth: 2
             }]

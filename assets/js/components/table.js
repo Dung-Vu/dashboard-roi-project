@@ -1,5 +1,5 @@
 import { ITEMS_PER_PAGE, STATE_LABELS, GP_HEALTH_HIGH, GP_HEALTH_MEDIUM } from '../config.js';
-import { escapeHTML, formatPercent, formatFullVND, formatVND, getHealthBucket, scrollToTableTop } from '../utils.js';
+import { escapeHTML, formatPercent, formatFullVND, formatVND, getHealthBucket, scrollToTableTop, isGPInInterval } from '../utils.js';
 import { state, saveUIState, applyPendingFilterSelections } from '../state.js';
 
 export function getSortValue(project, columnKey) {
@@ -50,7 +50,7 @@ export function updateSortIndicators() {
 export function exportCSV() {
     if (!state.filteredProjects || state.filteredProjects.length === 0) return;
 
-    const headers = ['Đơn hàng', 'Dự án', 'Khách hàng', 'Tags', 'Trạng thái', 'Doanh thu', 'Chi phí', 'GP', 'GP%'];
+    const headers = ['Đơn hàng', 'Dự án', 'Khách hàng', 'Tags', 'Trạng thái', 'Doanh thu', 'Chi phí', 'Chi phí gốc', 'GP', 'GP%'];
     const rows = applySorting(state.filteredProjects).map(p => [
         p.sale_order_name || '',
         p.project_name || '',
@@ -58,6 +58,7 @@ export function exportCSV() {
         (p.tags || []).join('; '),
         STATE_LABELS[p.order_state] || p.order_state || '',
         p.bg_untaxed,
+        p.adjusted_expected_cost ?? p.native_expected_cost,
         p.native_expected_cost,
         p.gp_amount,
         p.gp_percent !== null && p.gp_percent !== undefined ? p.gp_percent.toFixed(1) + '%' : '',
@@ -104,13 +105,12 @@ export function updateFilterIndicators() {
     const stateVal = stateFilter ? stateFilter.value : '';
     const healthVal = healthFilter ? healthFilter.value : '';
 
-    const hasActiveFilters = searchTerm || tagVal || stateVal || healthVal;
+    const hasActiveFilters = searchTerm || tagVal || stateVal || healthVal || state.gpRangeFilter;
 
     let clearBtn = document.getElementById('clearFiltersBtn');
     if (!clearBtn) {
         clearBtn = document.createElement('button');
         clearBtn.id = 'clearFiltersBtn';
-        clearBtn.textContent = '✕ Xóa bộ lọc';
         clearBtn.className = 'clear-filters-btn';
         clearBtn.addEventListener('click', clearFilters);
         const filterContainer = document.querySelector('.table-filters-box');
@@ -118,6 +118,13 @@ export function updateFilterIndicators() {
             filterContainer.appendChild(clearBtn);
         }
     }
+    
+    if (state.gpRangeFilter) {
+        clearBtn.innerHTML = `✕ Xóa bộ lọc (${state.gpRangeFilter})`;
+    } else {
+        clearBtn.textContent = '✕ Xóa bộ lọc';
+    }
+    
     clearBtn.style.display = hasActiveFilters ? 'inline-block' : 'none';
 }
 
@@ -131,6 +138,8 @@ export function clearFilters() {
     if (tagFilter) tagFilter.value = '';
     if (stateFilter) stateFilter.value = '';
     if (healthFilter) healthFilter.value = '';
+
+    state.gpRangeFilter = null;
 
     applyFilters();
 }
@@ -171,6 +180,7 @@ export function renderProjectsTable(projects) {
         const stateClass = p.order_state === 'Done' ? 'done' :
                           p.order_state === 'In progress' ? 'progress' : 'pending';
         const stateLabel = STATE_LABELS[p.order_state] || escapeHTML(p.order_state) || '-';
+        const adjustedCost = p.adjusted_expected_cost ?? p.native_expected_cost;
 
         let healthBadgeHTML = '';
         if (p.gp_percent === null || p.gp_percent === undefined) {
@@ -190,17 +200,26 @@ export function renderProjectsTable(projects) {
             `;
         }
 
+        const odooUrl = state.dashboardData?.meta?.odoo_url;
+        let saleOrderHTML = '';
+        const parsedId = p.sale_order_id ? Number(p.sale_order_id) : NaN;
+        if (odooUrl && !isNaN(parsedId)) {
+            saleOrderHTML = `<a href="${escapeHTML(odooUrl)}/web#id=${parsedId}&model=sale.order&view_type=form" target="_blank" rel="noopener noreferrer" class="odoo-link">${escapeHTML(p.sale_order_name) || '-'}</a>`;
+        } else {
+            saleOrderHTML = `<strong style="color: var(--color-emerald); font-family: var(--font-heading); font-size: 0.88rem;">${escapeHTML(p.sale_order_name) || '-'}</strong>`;
+        }
+
         const tr = document.createElement('tr');
         const isSelected = state.selectedProjects.has(p.project_id);
         tr.innerHTML = `
             <td style="text-align: center;"><input type="checkbox" class="project-checkbox" data-project-id="${p.project_id}" ${isSelected ? 'checked' : ''}></td>
-            <td><strong style="color: var(--color-emerald); font-family: var(--font-heading); font-size: 0.88rem;">${escapeHTML(p.sale_order_name) || '-'}</strong></td>
+            <td>${saleOrderHTML}</td>
             <td><span style="font-weight: 600; color: var(--color-text-primary);">${escapeHTML(p.project_name) || '-'}</span></td>
             <td style="color: var(--color-text-secondary); font-weight: 500;">${escapeHTML(p.customer) || '-'}</td>
             <td><div style="display: flex; flex-wrap: wrap; gap: 0.25rem;">${(p.tags || []).map(t => `<span class="tag-badge">${escapeHTML(t)}</span>`).join('')}</div></td>
             <td><span class="state-badge ${stateClass}">${stateLabel}</span></td>
             <td class="text-right" style="font-family: var(--font-heading); font-weight: 700; color: var(--color-text-primary);">${formatFullVND(p.bg_untaxed)}</td>
-            <td class="text-right" style="font-family: var(--font-heading); font-weight: 600; color: var(--color-text-secondary);">${formatFullVND(p.native_expected_cost)}</td>
+            <td class="text-right" style="font-family: var(--font-heading); font-weight: 600; color: var(--color-text-secondary);">${formatFullVND(adjustedCost)}</td>
             <td class="text-right ${gpClass}" style="font-family: var(--font-heading); font-weight: 700;">${formatFullVND(p.gp_amount)}</td>
             <td class="text-right" style="font-family: var(--font-heading); font-size: 0.825rem; vertical-align: middle;">${healthBadgeHTML}</td>
         `;
@@ -251,7 +270,7 @@ export function updateMultiSelectPanel() {
 
     selected.forEach(p => {
         totalBG += p.bg_untaxed || 0;
-        totalCost += p.native_expected_cost || 0;
+        totalCost += (p.adjusted_expected_cost ?? p.native_expected_cost) || 0;
         totalGP += p.gp_amount || 0;
         if (p.gp_percent !== null && p.gp_percent !== undefined && (p.bg_untaxed || 0) > 0) {
             weightedGPSum += p.gp_percent * p.bg_untaxed;
@@ -397,6 +416,10 @@ export function applyFilters() {
         if (tagVal && !(p.tags || []).includes(tagVal)) return false;
         if (stateVal && p.order_state !== stateVal) return false;
         if (healthVal && getHealthBucket(p) !== healthVal) return false;
+
+        if (state.gpRangeFilter) {
+            if (!isGPInInterval(p.gp_percent, state.gpRangeFilter)) return false;
+        }
 
         return true;
     });

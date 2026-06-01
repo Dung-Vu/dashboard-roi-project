@@ -95,3 +95,30 @@ export function scrollToTableTop() {
         table.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 }
+
+export function isGPInInterval(gp_percent, intervalLabel) {
+    if (gp_percent === null || gp_percent === undefined) return false;
+    
+    // Sử dụng Math.trunc để tương thích với logic int() của Python
+    const valTrunc = Math.trunc(gp_percent);
+
+    if (intervalLabel === "<0%") {
+        return valTrunc < 0;
+    }
+    if (intervalLabel === "0-20%") {
+        return valTrunc >= 0 && valTrunc <= 20;
+    }
+    if (intervalLabel === "21-40%") {
+        return valTrunc >= 21 && valTrunc <= 40;
+    }
+    
+    // So khớp dải dạng "X-Y%"
+    const match = intervalLabel.match(/^(\d+)-(\d+)%$/);
+    if (match) {
+        const start = parseInt(match[1], 10);
+        const end = parseInt(match[2], 10);
+        return valTrunc >= start && valTrunc <= end;
+    }
+    return false;
+}
+
