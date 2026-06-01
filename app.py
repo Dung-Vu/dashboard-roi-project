@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request, send_from_directory, redirect
 from werkzeug.exceptions import HTTPException
 
 from config import get_settings
@@ -93,6 +93,42 @@ def create_app() -> Flask:
         payload = service.build_projects_dashboard(date_from, company=company, refresh=refresh)
         return jsonify(payload)
 
+    @app.get("/api/redirect/sale-order/<int:so_id>")
+    def redirect_to_sale_order(so_id):
+        settings = get_settings()
+        url = f"{settings.odoo_url.rstrip('/')}/web#id={so_id}&model=sale.order&view_type=form"
+        return redirect(url, code=302)
+
+    def _sanitize_error_message(message: str) -> str:
+        if not message:
+            return message
+        from urllib.parse import urlparse
+        sensitive_terms = []
+        if settings.odoo_url:
+            sensitive_terms.append(settings.odoo_url)
+            try:
+                parsed = urlparse(settings.odoo_url)
+                if parsed.netloc:
+                    sensitive_terms.append(parsed.netloc)
+                    if parsed.hostname:
+                        sensitive_terms.append(parsed.hostname)
+                        parts = parsed.hostname.split(".")
+                        if len(parts) > 1:
+                            sensitive_terms.append(parts[0])
+            except Exception:
+                pass
+        if settings.odoo_db:
+            sensitive_terms.append(settings.odoo_db)
+        if settings.odoo_api_key:
+            sensitive_terms.append(settings.odoo_api_key)
+        if settings.odoo_user_id:
+            sensitive_terms.append(str(settings.odoo_user_id))
+            
+        unique_terms = sorted(list(set(term for term in sensitive_terms if term and len(term) > 2)), key=len, reverse=True)
+        for term in unique_terms:
+            message = message.replace(term, "********")
+        return message
+
     @app.errorhandler(OdooAPIError)
     def handle_odoo_error(error: OdooAPIError):
         payload = {
@@ -102,9 +138,9 @@ def create_app() -> Flask:
         if settings.debug:
             payload.update(
                 {
-                    "error": str(error),
-                    "model": error.model,
-                    "method": error.method,
+                    "error": _sanitize_error_message(str(error)),
+                    "model": _sanitize_error_message(error.model),
+                    "method": _sanitize_error_message(error.method),
                 }
             )
         return (
@@ -117,7 +153,7 @@ def create_app() -> Flask:
         if isinstance(error, HTTPException):
             return error
         app.logger.exception("Unhandled error")
-        message = str(error) if settings.debug else "Internal server error"
+        message = _sanitize_error_message(str(error)) if settings.debug else "Internal server error"
         return jsonify({"ok": False, "error": message}), 500
 
     return app

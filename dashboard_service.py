@@ -713,7 +713,6 @@ class DashboardService:
         return {
             "date_field": "sale.order.date_order",
             "company": self._company_payload(company_key),
-            "odoo_url": self.client.url,
             "project_scope": "all_order_states",
             "project_active_scope": "active_and_archived",
             "summary_scope": "done_only",

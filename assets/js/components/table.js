@@ -205,8 +205,12 @@ export function renderProjectsTable(projects) {
         const odooUrl = state.dashboardData?.meta?.odoo_url;
         let saleOrderHTML = '';
         const parsedId = p.sale_order_id ? Number(p.sale_order_id) : NaN;
-        if (odooUrl && !isNaN(parsedId)) {
-            saleOrderHTML = `<a href="${escapeHTML(odooUrl)}/web#id=${parsedId}&model=sale.order&view_type=form" target="_blank" rel="noopener noreferrer" class="odoo-link">${escapeHTML(p.sale_order_name) || '-'}</a>`;
+        if (!isNaN(parsedId)) {
+            if (odooUrl) {
+                saleOrderHTML = `<a href="${escapeHTML(odooUrl)}/web#id=${parsedId}&model=sale.order&view_type=form" target="_blank" rel="noopener noreferrer" class="odoo-link">${escapeHTML(p.sale_order_name) || '-'}</a>`;
+            } else {
+                saleOrderHTML = `<a href="/api/redirect/sale-order/${parsedId}" target="_blank" rel="noopener noreferrer" class="odoo-link">${escapeHTML(p.sale_order_name) || '-'}</a>`;
+            }
         } else {
             saleOrderHTML = `<strong style="color: var(--color-emerald); font-family: var(--font-heading); font-size: 0.88rem;">${escapeHTML(p.sale_order_name) || '-'}</strong>`;
         }

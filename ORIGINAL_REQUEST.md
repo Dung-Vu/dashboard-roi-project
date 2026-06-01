@@ -500,3 +500,49 @@ Integrity mode: `development`
 
 
 
+
+## Follow-up — 2026-06-01T23:50:48+07:00
+
+# Teamwork Project Prompt — Draft
+
+> Status: Launched
+> Goal: Craft prompt → get user approval → delegate to teamwork_preview
+
+Rà soát toàn diện website và mã nguồn Bonario ROI Dashboard để đảm bảo an toàn thông tin tuyệt đối, ngăn chặn và loại bỏ mọi nguy cơ rò rỉ thông tin kết nối Odoo (URL, DB, USER_ID, API KEY) lên frontend hoặc tệp giao diện công khai.
+
+Working directory: `d:\dashboard-roi-project`
+Integrity mode: `development`
+
+## Requirements
+
+### R1. Kiểm toán An toàn Giao diện Frontend (Client-side Audit)
+- Quét toàn bộ mã nguồn giao diện bao gồm `index.html`, `app.js`, `styles.css` và tất cả các mô-đun Javascript trong thư mục `assets/js/` để kiểm tra có bất kỳ biến, chuỗi viết cứng hoặc chú thích mã nguồn nào chứa thông tin kết nối Odoo hay không.
+- Đảm bảo các kết nối API từ frontend chỉ giao tiếp thông qua các cổng API nội bộ của máy chủ Flask (như `/api/projects-dashboard` và `/api/health`) chứ không gọi trực tiếp hoặc gửi thông tin XML-RPC của Odoo về phía trình duyệt client.
+
+### R2. Kiểm toán Đóng gói Server-side (Server-side Encapsulation)
+- Xác nhận các tệp cấu hình Python (`config.py`, `app.py`, `odoo_client.py`) đọc đầy đủ các biến môi trường từ tệp `.env` cục bộ và không lưu vết cứng.
+- Đảm bảo các Flask endpoint không trả về thông tin mật như `odoo_api_key` hay `odoo_password` trong các phản hồi JSON thông thường cũng như các phản hồi lỗi (error stack traces) khi Odoo gặp sự cố.
+
+### R3. Rà soát Cơ chế Cố định Lịch sử (Git History & Logs)
+- Xác nhận tệp `.gitignore` bỏ qua chính xác tất cả các tệp nhạy cảm (`.env`, `*.db`, `*.log`, `agents/`, v.v.).
+- Chạy các bài kiểm thử tự động để đảm bảo tính ổn định và bảo mật của toàn bộ luồng truyền dữ liệu.
+
+## Acceptance Criteria
+
+### An toàn Frontend (Client-side Security)
+- [ ] Không phát hiện bất kỳ chuỗi thông tin đăng nhập, API key, địa chỉ URL instance Odoo, cơ sở dữ liệu Odoo hoặc mã định danh user nào trong toàn bộ tệp HTML, JS, CSS ở phía client.
+- [ ] Mọi yêu cầu truy vấn dữ liệu từ frontend được gửi an toàn đến các API endpoint cục bộ của Flask máy chủ, không có kết nối XML-RPC trực tiếp nào từ trình duyệt đến Odoo.
+
+### An toàn API Backend (API Encapsulation)
+- [ ] API endpoint `/api/health` và `/api/projects-dashboard` không trả về khóa `odoo_api_key` hoặc thông tin kết nối trong gói JSON phản hồi.
+- [ ] Các thông tin đăng nhập Odoo chỉ được lưu trữ dưới dạng biến môi trường cục bộ và được đóng gói an toàn tại backend.
+
+### Tính ổn định và QA (Stability & Testing)
+- [ ] Vượt qua 100% tất cả 28 bài unit/integration tests backend (Python) và 12 bài stress tests frontend JS.
+
+---
+*Next: when approved → delegate via invoke_subagent (see Delegation Protocol)*
+
+
+
+

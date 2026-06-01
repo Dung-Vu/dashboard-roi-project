@@ -49,6 +49,37 @@ class OdooAPI:
         self.session.mount("https://", adapter)
         atexit.register(self.close)
 
+    def _sanitize(self, text: str) -> str:
+        if not text:
+            return text
+        from urllib.parse import urlparse
+        
+        sensitive_terms = []
+        if self.url:
+            sensitive_terms.append(self.url)
+            try:
+                parsed = urlparse(self.url)
+                if parsed.netloc:
+                    sensitive_terms.append(parsed.netloc)
+                    if parsed.hostname:
+                        sensitive_terms.append(parsed.hostname)
+                        parts = parsed.hostname.split(".")
+                        if len(parts) > 1:
+                            sensitive_terms.append(parts[0])
+            except Exception:
+                pass
+        if self.db:
+            sensitive_terms.append(self.db)
+        if self.api_key:
+            sensitive_terms.append(self.api_key)
+        if hasattr(self, "uid") and self.uid:
+            sensitive_terms.append(str(self.uid))
+            
+        unique_terms = sorted(list(set(term for term in sensitive_terms if term and len(term) > 2)), key=len, reverse=True)
+        for term in unique_terms:
+            text = text.replace(term, "********")
+        return text
+
     def call_method(
         self,
         model: str,
@@ -90,16 +121,17 @@ class OdooAPI:
             response.raise_for_status()
             result = response.json()
         except requests.exceptions.Timeout as exc:
-            raise OdooAPIError(f"Request timeout: {exc}", model=model, method=method) from exc
+            raise OdooAPIError("Request timeout", model=model, method=method) from None
         except requests.exceptions.ConnectionError as exc:
-            raise OdooAPIError(f"Connection error: {exc}", model=model, method=method) from exc
+            raise OdooAPIError("Connection error", model=model, method=method) from None
         except Exception as exc:
-            raise OdooAPIError(str(exc), model=model, method=method) from exc
+            sanitized_exc = self._sanitize(str(exc))
+            raise OdooAPIError(f"Odoo request failed: {sanitized_exc}", model=model, method=method) from None
 
         if "error" in result:
             error = result["error"]
             message = error.get("data", {}).get("message") or error.get("message") or str(error)
-            raise OdooAPIError(message, model=model, method=method)
+            raise OdooAPIError(self._sanitize(message), model=model, method=method)
 
         return result.get("result")
 
