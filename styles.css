@@ -70,7 +70,7 @@
 
 html {
   scroll-behavior: smooth;
-  font-size: 13px; /* Natively scales all REM units to exactly ~80% (13px is 81.25% of standard 16px) */
+  font-size: 13.5px; /* Natively scales all REM units to exactly ~84% of standard 16px */
 }
 
 body {
@@ -1119,7 +1119,7 @@ html, body {
 .table-filters-box {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
+  flex-wrap: nowrap; /* Forced single row on desktop */
   gap: 0.75rem;
 }
 
@@ -1170,17 +1170,17 @@ html, body {
 .data-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.81rem;
+  font-size: 0.84rem;
   text-align: left;
 }
 
 .data-table th {
   background: rgba(43, 108, 176, 0.02);
-  padding: 8px 12px;
+  padding: 10px 14px;
   font-weight: 700;
   color: var(--color-text-secondary);
   text-transform: uppercase;
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   letter-spacing: 0.05em;
   border-bottom: 1px solid rgba(0, 0, 0, 0.04);
   white-space: nowrap;
@@ -1210,7 +1210,7 @@ html, body {
 }
 
 .data-table td {
-  padding: 8px 12px;
+  padding: 10px 14px;
   border-bottom: 1px solid rgba(0, 0, 0, 0.02);
   color: var(--color-text-primary);
   font-weight: 500;
