@@ -543,11 +543,11 @@ html, body {
 
 .search-icon {
   position: absolute;
-  left: 14px;
+  left: 12px;
   top: 50%;
   transform: translateY(-50%);
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
   color: var(--color-text-secondary);
   pointer-events: none;
   transition: var(--transition-smooth);
@@ -557,14 +557,14 @@ html, body {
   width: 100%;
   background: #ffffff;
   border: 1px solid var(--glass-border);
-  padding: 10px 15px 10px 42px;
+  padding: 6px 12px 6px 34px;
   color: var(--color-text-primary);
   font-family: var(--font-main);
-  border-radius: 14px;
-  font-size: 14px;
+  border-radius: 10px;
+  font-size: 12.5px;
   outline: none;
   transition: var(--transition-smooth);
-  height: 38px;
+  height: 32px;
   box-sizing: border-box;
 }
 
@@ -1130,26 +1130,26 @@ html, body {
 }
 
 .filter-select {
-  padding: 0.55rem 2rem 0.55rem 0.85rem;
+  padding: 0.35rem 1.6rem 0.35rem 0.65rem;
   background: #ffffff;
   border: 1px solid var(--glass-border);
-  border-radius: 12px;
+  border-radius: 10px;
   color: var(--color-text-primary);
   font-family: var(--font-main);
-  font-size: 0.825rem;
+  font-size: 0.78rem;
   font-weight: 600;
   outline: none;
   cursor: pointer;
-  min-width: 140px;
+  min-width: 130px;
   flex-shrink: 0;
   transition: var(--transition-smooth);
   appearance: none;
   -webkit-appearance: none;
   background-image: url("data:image/svg+xml;charset=UTF-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23557361' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
   background-repeat: no-repeat;
-  background-position: right 0.75rem center;
-  background-size: 0.85rem;
-  height: 38px;
+  background-position: right 0.6rem center;
+  background-size: 0.75rem;
+  height: 32px;
   box-sizing: border-box;
 }
 
@@ -1170,17 +1170,17 @@ html, body {
 .data-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.86rem;
+  font-size: 0.81rem;
   text-align: left;
 }
 
 .data-table th {
   background: rgba(43, 108, 176, 0.02);
-  padding: 16px 20px;
+  padding: 8px 12px;
   font-weight: 700;
   color: var(--color-text-secondary);
   text-transform: uppercase;
-  font-size: 0.75rem;
+  font-size: 0.72rem;
   letter-spacing: 0.05em;
   border-bottom: 1px solid rgba(0, 0, 0, 0.04);
   white-space: nowrap;
@@ -1210,7 +1210,7 @@ html, body {
 }
 
 .data-table td {
-  padding: 16px 20px;
+  padding: 8px 12px;
   border-bottom: 1px solid rgba(0, 0, 0, 0.02);
   color: var(--color-text-primary);
   font-weight: 500;

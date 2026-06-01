@@ -11,7 +11,7 @@ const COMPANY_OPTIONS = [
 const GP_HEALTH_HIGH = 40;
 const GP_HEALTH_MEDIUM = 15;
 const UI_STATE_KEY = 'bonario-roi-dashboard-ui-v2';
-const ITEMS_PER_PAGE = 10;
+const ITEMS_PER_PAGE = 8;
 
 const STATE_LABELS = {
     'Done': 'Hoàn tất',
