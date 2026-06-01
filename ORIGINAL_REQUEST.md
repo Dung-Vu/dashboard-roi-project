@@ -450,3 +450,53 @@ Integrity mode: `development`
 *Next: when approved → delegate via invoke_subagent (see Delegation Protocol)*
 
 
+## Follow-up — 2026-06-01T23:01:16+07:00
+
+# Teamwork Project Prompt — Draft
+
+> Status: Launched
+> Goal: Craft prompt → get user approval → delegate to teamwork_preview
+
+Nghiên cứu, rà soát và điều chỉnh toàn bộ mã nguồn Bonario ROI Dashboard để đồng bộ hóa hoàn hảo cấu trúc co giãn CSS Layout tự nhiên (Native 80% Scaling) trên tất cả các trang, linh kiện, và biểu đồ dưới mức zoom mặc định 100% của trình duyệt. Đảm bảo loại bỏ hoàn toàn các lỗi tọa độ trỏ chuột của Chart.js và các vấn đề vỡ khung hiển thị.
+
+Working directory: `d:\dashboard-roi-project`
+Integrity mode: `development`
+
+## Requirements
+
+### R1. Rà soát & Đồng bộ hóa Native 80% CSS Layout toàn trang
+- Quét toàn bộ tệp `styles.css` và các tệp JS thành phần để đảm bảo hệ thống co giãn tự nhiên `font-size: 13px` hoạt động hoàn hảo trên mọi ngóc ngách của dashboard.
+- Rà soát các thuộc tính kích thước cứng bằng pixel (px) như chiều rộng, khoảng cách, lề, chiều cao của tất cả các linh kiện (Overview cards, KPI cards, table filters, table rows, tag analysis panels, ranks views) và điều chỉnh giảm 20% hoặc chuyển sang đơn vị tương đối (rem/em) để đạt tính cân đối tuyệt đối.
+- Đảm bảo Sidebar (240px) và Main Container chiếm trọn vẹn màn hình `100vh` một cách đẹp mắt và ổn định.
+
+### R2. Tối ưu hóa biểu đồ & phần tử tương tác (Chart.js & Tooltips)
+- Đảm bảo toàn bộ các biểu đồ Chart.js (cột GP%, tròn doanh thu, sparklines) và các phần tử tương tác khác có tọa độ rê chuột (hover/tooltip) khớp chính xác tuyệt đối với trỏ chuột dưới hệ thống layout mới.
+- Tinh chỉnh các tooltip của biểu đồ hiển thị chữ rõ nét, phối màu tương phản cao (Coastal Blue theme) và không bị lệch dòng hay tràn viền.
+
+### R3. Rà soát và Tối ưu hóa Giao diện Di động (Mobile Responsive & Zoom)
+- Thực hiện rà soát sâu khả năng hiển thị responsive trên các màn hình có chiều rộng hẹp (di động, máy tính bảng) và các chế độ co giãn trình duyệt khác nhau.
+- Đảm bảo các bộ lọc, thanh chỉ báo Scope Bar, bảng dự án, phân trang và footer tự động chuyển đổi sang giao diện di động một cách hoàn hảo, không có bất kỳ hiện tượng rớt chữ hoặc tràn viền ngang.
+
+### R4. Tính toàn vẹn của mã nguồn & Kiểm thử QA
+- Vượt qua 100% tất cả 28 bài unit tests backend (Python) và 12 bài stress tests frontend JS.
+
+## Acceptance Criteria
+
+### Giao diện & Layout (Visual Excellence)
+- [ ] Toàn bộ các trang (Overview, Tags, Projects Table, Ranks Chart) hiển thị đồng bộ ở tỉ lệ co giãn 80% tự nhiên (dưới mức zoom 100% mặc định của trình duyệt) mà không bị lỗi layout shift, clipping hay vỡ khung.
+- [ ] Thanh chỉ báo Scope Bar và các bộ lọc Table Filters hiển thị thẳng hàng, cân xứng tuyệt đối trên cả Desktop và di động.
+- [ ] Tất cả các nhãn KPI, thẻ số liệu, nút bấm không bị rớt chữ hoặc tràn viền ngang.
+
+### Tương tác biểu đồ & Hover (Interaction accuracy)
+- [ ] Các điểm dữ liệu, cột biểu đồ Chart.js khi rê chuột hiển thị tooltip chính xác 100%, không bị lệch cột hoặc hiển thị sai thông số.
+- [ ] Các Sparkline KPI cards và tooltip có màu chữ sắc nét, độ tương phản cao, hòa hợp với tông màu Soft Coastal Pastel Blue.
+
+### Tương thích Responsive & QA Tests
+- [ ] Không còn bất kỳ lỗi Console JS hay cảnh báo CSS nào xuất hiện khi chuyển trang hoặc tương tác.
+- [ ] Vượt qua 100% tất cả các bài kiểm thử tự động (28/28 Python tests và 12/12 JS stress tests).
+
+---
+*Next: when approved → delegate via invoke_subagent (see Delegation Protocol)*
+
+
+

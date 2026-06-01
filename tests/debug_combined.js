@@ -288,8 +288,8 @@ async function fetchDashboard(dateFrom, company = 'bonario', refresh = false) {
 
 const TAG_COLORS = {
     "Nội thất rời": { border: '#2b6cb0', start: 'rgba(43, 108, 176, 0.4)', end: 'rgba(43, 108, 176, 0.02)' },
-    "Giấy dán tường": { border: '#ed8936', start: 'rgba(237, 137, 54, 0.4)', end: 'rgba(237, 137, 54, 0.02)' },
-    "Rèm": { border: '#4299e1', start: 'rgba(66, 153, 225, 0.4)', end: 'rgba(66, 153, 225, 0.02)' },
+    "Giấy dán tường": { border: '#f6ad55', start: 'rgba(246, 173, 85, 0.4)', end: 'rgba(246, 173, 85, 0.02)' },
+    "Rèm": { border: '#319795', start: 'rgba(49, 151, 149, 0.4)', end: 'rgba(49, 151, 149, 0.02)' },
     "Vải nội thất": { border: '#9f7aea', start: 'rgba(159, 122, 234, 0.4)', end: 'rgba(159, 122, 234, 0.02)' }
 };
 
@@ -385,10 +385,10 @@ function renderGPChart(tagGPRanks) {
         return {
             label: tag,
             data: sortedRanges.map(range => rankMap[range] ? rankMap[range] : null),
-            skipNull: false,
+            skipNull: true,
             categoryPercentage: 0.85,
-            barPercentage: 0.9,
-            maxBarThickness: 32,
+            barPercentage: 0.8,
+            maxBarThickness: 28,
             minBarLength: 10,
             backgroundColor: function(context) {
                 const chart = context.chart;
