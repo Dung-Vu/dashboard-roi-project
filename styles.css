@@ -1111,7 +1111,7 @@ html, body {
 /* ===== Left Column Chart Area ===== */
 .chart-container {
   position: relative;
-  height: 380px;
+  height: 310px; /* Reduced from 380px */
   padding: 0.5rem;
 }
 
