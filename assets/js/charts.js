@@ -101,10 +101,10 @@ export function renderGPChart(tagGPRanks) {
         return {
             label: tag,
             data: sortedRanges.map(range => rankMap[range] ? rankMap[range] : null),
-            skipNull: true,
+            skipNull: false,
             categoryPercentage: 0.85,
             barPercentage: 0.8,
-            maxBarThickness: 28,
+            maxBarThickness: 16,
             minBarLength: 10,
             backgroundColor: function(context) {
                 const chart = context.chart;
