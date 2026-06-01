@@ -56,7 +56,7 @@
   --gradient-gold: linear-gradient(135deg, #ffd700 0%, #d4af37 100%);
   --gradient-silver: linear-gradient(135deg, #e6ece8 0%, #b8c5b0 100%);
   --gradient-bronze: linear-gradient(135deg, #d3c2b0 0%, #aa8f76 100%);
-  --zoom-factor: 0.8;
+  --zoom-factor: 1.0;
   --color-border: rgba(43, 108, 176, 0.15);
 }
 
@@ -70,7 +70,7 @@
 
 html {
   scroll-behavior: smooth;
-  zoom: var(--zoom-factor); /* Replicates the exact 80% browser zoom scale preferred by the user */
+  font-size: 13px; /* Natively scales all REM units to exactly ~80% (13px is 81.25% of standard 16px) */
 }
 
 body {
@@ -81,13 +81,13 @@ body {
   background-repeat: no-repeat;
   background-attachment: fixed;
   color: var(--color-text-primary);
-  min-height: calc(100vh / var(--zoom-factor));
+  min-height: 100vh;
   position: relative;
 }
 
 html, body {
   overflow: hidden !important;
-  height: calc(100% / var(--zoom-factor)) !important;
+  height: 100% !important;
 }
 
 /* ===== Skip Link (Accessibility) ===== */
@@ -278,8 +278,8 @@ html, body {
 /* ===== App Layout Architecture ===== */
 .app-layout {
   display: grid;
-  grid-template-columns: 300px 1fr;
-  min-height: calc(100vh / var(--zoom-factor));
+  grid-template-columns: 240px 1fr; /* Native 80% sidebar width (240px instead of 300px) */
+  min-height: 100vh;
   width: 100%;
   gap: 0;
 }
@@ -290,13 +290,13 @@ html, body {
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
   border: 1px solid rgba(255, 255, 255, 0.08) !important;
-  padding: 30px 20px;
+  padding: 24px 16px; /* Native 80% paddings */
   display: flex;
   flex-direction: column;
-  height: calc(100vh / var(--zoom-factor) - 40px);
+  height: calc(100vh - 32px); /* Standard 100vh - margins */
   position: sticky;
-  top: 20px;
-  margin: 20px 10px 20px 20px;
+  top: 16px;
+  margin: 16px 8px 16px 16px; /* Native 80% margins */
   z-index: 100;
   box-shadow: 0 20px 50px rgba(4, 9, 6, 0.25);
   border-radius: 24px !important;
@@ -309,9 +309,9 @@ html, body {
 .sidebar-brand {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 40px;
-  padding: 0 10px;
+  gap: 10px; /* Native 80% */
+  margin-bottom: 24px; /* Native 80% */
+  padding: 0 8px; /* Native 80% */
 }
 
 .brand-logo {
@@ -496,11 +496,11 @@ html, body {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  height: calc(100vh / var(--zoom-factor) - 40px);
+  height: calc(100vh - 32px); /* Standard 100vh - margins */
   overflow-y: auto;
   overflow-x: hidden !important;
   scrollbar-gutter: stable;
-  margin: 20px 20px 20px 10px;
+  margin: 16px 16px 16px 8px; /* Native 80% margins */
   border-radius: 24px;
   background: transparent;
   transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.3s cubic-bezier(0.16, 1, 0.3, 1);
@@ -523,7 +523,7 @@ html, body {
 
 .main-content {
   flex: 1;
-  padding: 40px;
+  padding: 32px; /* Native 80% padding */
   width: 100%;
 }
 
