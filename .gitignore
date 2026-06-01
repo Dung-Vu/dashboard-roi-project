@@ -12,6 +12,8 @@ build/
 
 # Cache
 .cache.db
+*.db
+agents/
 
 # Claude Code
 .claude/
