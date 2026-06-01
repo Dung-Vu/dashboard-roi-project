@@ -32,6 +32,11 @@ Thumbs.db
 test_results.txt
 test_run.log
 *.log
+tests/debug_combined.js
+
+# Data Files
+*.xlsx
 
 # Agent local files
 .agents/
+..agents/
