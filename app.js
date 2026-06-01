@@ -89,8 +89,11 @@ function updateMenuIndicator() {
     const activeRect = activeItem.getBoundingClientRect();
     const menuRect = menuContainer.getBoundingClientRect();
 
-    const offsetTop = activeRect.top - menuRect.top;
-    const height = activeRect.height;
+    // Get the zoom factor from CSS variable --zoom-factor (default is 1.0 if not present)
+    const zoomFactor = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--zoom-factor')) || 1.0;
+
+    const offsetTop = (activeRect.top - menuRect.top) / zoomFactor;
+    const height = activeRect.height / zoomFactor;
 
     indicator.style.height = `${height}px`;
     indicator.style.transform = `translate3d(0, ${offsetTop}px, 0)`;
