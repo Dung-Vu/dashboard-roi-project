@@ -1,5 +1,5 @@
 import { ITEMS_PER_PAGE, STATE_LABELS, GP_HEALTH_HIGH, GP_HEALTH_MEDIUM } from '../config.js';
-import { escapeHTML, formatPercent, formatFullVND, formatVND, getHealthBucket, scrollToTableTop, isGPInInterval } from '../utils.js';
+import { escapeHTML, formatPercent, formatFullVND, formatVND, getHealthBucket, scrollToTableTop, isGPInInterval, normalizeText } from '../utils.js';
 import { state, saveUIState, applyPendingFilterSelections } from '../state.js';
 
 export function getSortValue(project, columnKey) {
@@ -28,9 +28,11 @@ const _COST_LABEL_MAP = {
     'non_billable': 'Không tính phí',
     'downpayment': 'Tạm ứng',
     'stock_move': 'Xuất kho',
+    'shipping_cost': 'Chi phí vận chuyển',
+    'other_expense': 'Chi phí khác',
 };
 
-function _translateCostLabel(rawLabel) {
+export function translateCostLabel(rawLabel) {
     if (!rawLabel) return 'Khác';
     const key = rawLabel.toLowerCase().replace(/\s+/g, '_');
     return _COST_LABEL_MAP[key] || _COST_LABEL_MAP[rawLabel] || rawLabel;
@@ -294,6 +296,12 @@ export function renderProjectsTable(projects) {
                     <div style="font-size: 0.78rem; font-weight: 700; color: var(--color-emerald); margin-bottom: 0.5rem; font-family: var(--font-heading); display:flex; align-items:center; gap:6px;">
                         <i class="fas fa-layer-group" style="font-size:0.7rem;"></i>
                         Cấu thành chi phí — ${escapeHTML(p.sale_order_name)}
+                        <span id="cost-loading-${p.project_id}" style="display:none; font-weight: 400; color: var(--color-text-secondary); font-size: 0.72rem; margin-left: 8px;">
+                            <i class="fas fa-spinner fa-spin" style="color: var(--color-emerald); font-size: 0.7rem;"></i> Đang cập nhật...
+                        </span>
+                        <span id="cost-error-${p.project_id}" style="display:none; font-weight: 400; color: #dc2626; font-size: 0.72rem; margin-left: 8px;">
+                            <i class="fas fa-exclamation-triangle"></i> Lỗi kết nối Odoo
+                        </span>
                     </div>
                     <table style="width: 100%; border-collapse: collapse; font-size: 0.82rem;">
                         <thead><tr style="border-bottom: 1px solid rgba(16, 120, 80, 0.15);">
@@ -301,26 +309,14 @@ export function renderProjectsTable(projects) {
                             <th style="text-align:right;padding:6px 8px;font-weight:600;color:var(--color-text-secondary);font-size:0.75rem;text-transform:uppercase;letter-spacing:0.5px;">Đã thanh toán</th>
                             <th style="text-align:right;padding:6px 8px;font-weight:600;color:var(--color-text-secondary);font-size:0.75rem;text-transform:uppercase;letter-spacing:0.5px;">Chờ thanh toán</th>
                             <th style="text-align:right;padding:6px 8px;font-weight:600;color:var(--color-text-secondary);font-size:0.75rem;text-transform:uppercase;letter-spacing:0.5px;">Tổng chi phí</th>
-                        </tr></thead><tbody>`;
-            let tBilled = 0, tCommit = 0, tExpected = 0;
-            p.cost_breakdown.forEach(item => {
-                const b = item.billed ?? 0, c = item.open_commitment ?? 0, e = item.expected ?? 0;
-                tBilled += b; tCommit += c; tExpected += e;
-                const pct = nativeCost > 0 ? ((e / nativeCost) * 100).toFixed(1) : '0';
-                const label = _translateCostLabel(item.label);
-                bHTML += `<tr style="border-bottom:1px solid rgba(16,120,80,0.08);">
-                    <td style="padding:5px 8px;color:var(--color-text-primary);font-weight:500;"><div style="display:flex;align-items:center;gap:6px;"><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:var(--color-emerald);opacity:0.6;"></span>${escapeHTML(label)}<span style="font-size:0.7rem;color:var(--color-text-secondary);font-weight:400;">(${pct}%)</span></div></td>
-                    <td style="text-align:right;padding:5px 8px;font-family:var(--font-heading);color:var(--color-text-secondary);">${formatFullVND(b)}</td>
-                    <td style="text-align:right;padding:5px 8px;font-family:var(--font-heading);color:${c > 0 ? '#d97706' : 'var(--color-text-secondary)'};">${formatFullVND(c)}</td>
-                    <td style="text-align:right;padding:5px 8px;font-family:var(--font-heading);font-weight:600;color:var(--color-text-primary);">${formatFullVND(e)}</td>
-                </tr>`;
-            });
-            bHTML += `<tr style="border-top:2px solid rgba(16,120,80,0.2);font-weight:700;">
-                <td style="padding:6px 8px;color:var(--color-emerald);font-family:var(--font-heading);"><i class="fas fa-equals" style="font-size:0.65rem;margin-right:4px;"></i> TỔNG CHI PHÍ GỐC</td>
-                <td style="text-align:right;padding:6px 8px;font-family:var(--font-heading);color:var(--color-text-primary);">${formatFullVND(tBilled)}</td>
-                <td style="text-align:right;padding:6px 8px;font-family:var(--font-heading);color:${tCommit > 0 ? '#d97706' : 'var(--color-text-primary)'};">${formatFullVND(tCommit)}</td>
-                <td style="text-align:right;padding:6px 8px;font-family:var(--font-heading);color:var(--color-emerald);font-size:0.95rem;">${formatFullVND(tExpected)}</td>
-            </tr></tbody></table></div></td>`;
+                        </tr></thead><tbody id="aggregated-cost-tbody-${p.project_id}">
+                            <tr class="cost-placeholder-row">
+                                <td colspan="4" style="text-align:center;padding:1.5rem;color:var(--color-text-secondary);">
+                                    <i class="fas fa-spinner fa-spin" style="margin-right:8px;color:var(--color-emerald);"></i>Đang tải dữ liệu chi tiết từ Odoo...
+                                </td>
+                            </tr>
+                        </tbody></table>
+                    </div></td>`;
             detailTr.innerHTML = bHTML;
             fragment.appendChild(detailTr);
         }
@@ -497,18 +493,18 @@ export function applyFilters() {
     const stateFilter = document.getElementById('stateFilter');
     const healthFilter = document.getElementById('healthFilter');
 
-    const searchTerm = searchInput ? searchInput.value.trim().toLowerCase() : '';
+    const searchTerm = searchInput ? normalizeText(searchInput.value) : '';
     const tagVal = tagFilter ? tagFilter.value : '';
     const stateVal = stateFilter ? stateFilter.value : '';
     const healthVal = healthFilter ? healthFilter.value : '';
 
     state.filteredProjects = state.dashboardData.projects.filter(p => {
         if (searchTerm) {
-            const searchFields = [
+            const searchFields = normalizeText([
                 p.sale_order_name,
                 p.x_studio_giai_trinh,
                 p.customer,
-            ].filter(Boolean).join(' ').toLowerCase();
+            ].filter(Boolean).join(' '));
             if (!searchFields.includes(searchTerm)) return false;
         }
 

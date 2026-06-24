@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 TWO_DECIMALS = Decimal("0.01")
-PROJECTS_DASHBOARD_TTL_SECONDS = 1800  # 30 minutes
+PROJECTS_DASHBOARD_TTL_SECONDS = 3600  # 1 hour
 PROJECTS_DASHBOARD_MAX_WORKERS = 8
 DASHBOARD_TARGET_TAGS = ("Nội thất rời", "Giấy dán tường", "Rèm", "Vải nội thất")
 EXCLUDED_SALESPERSONS = ("CEO office", "Đỗ Thị Hải Yến", "CEO office, Đỗ Thị Hải Yến")
@@ -94,8 +94,10 @@ class DashboardService:
         self._projects_dashboard_cache: dict[str, tuple[float, dict[str, Any]]] = {}
         self._cache_lock = Lock()
         self._db_cache = PersistentCache(ttl=86400 * 30)
+        self._profitability_cache = PersistentCache(ttl=1800)
         self._active_updates: set[str] = set()
         self._active_updates_lock = Lock()
+        self._warmer_stop_event = threading.Event()
 
     def test_connection(self) -> dict[str, Any]:
         return self.client.test_connection()
@@ -252,9 +254,23 @@ class DashboardService:
         # 1. Check in-memory cache
         with self._cache_lock:
             cached = self._projects_dashboard_cache.get(cache_key)
-            if cached and monotonic() - cached[0] < PROJECTS_DASHBOARD_TTL_SECONDS:
-                logger.debug(f"Memory cache hit for {cache_key}")
-                return cached[1]
+            if cached:
+                age = monotonic() - cached[0]
+                if age < 300:  # Fresh memory cache (< 5 minutes)
+                    logger.debug(f"Memory cache hit (fresh, age: {age:.1f}s) for {cache_key}")
+                    return cached[1]
+                elif age < PROJECTS_DASHBOARD_TTL_SECONDS:  # Stale memory cache (< 1 hour): revalidate
+                    logger.info(f"Memory cache hit but stale (age: {age:.1f}s) for {cache_key}. Triggering revalidation.")
+                    with self._active_updates_lock:
+                        if cache_key not in self._active_updates:
+                            self._active_updates.add(cache_key)
+                            t = threading.Thread(
+                                target=self._async_update_projects_dashboard,
+                                args=(date_from, company_key, cache_key, db_cache_key),
+                                daemon=True
+                            )
+                            t.start()
+                    return cached[1]
 
         # 2. Check SQLite cache
         db_cached = self._db_cache.get(db_cache_key)
@@ -272,18 +288,22 @@ class DashboardService:
                     logger.info(f"SQLite cache hit & fresh (age: {age:.1f}s) for {cache_key}")
                     return db_cached
                 
-                # Stale (>= 5 minutes): return stale instantly, and spawn background revalidation thread
-                logger.info(f"SQLite cache hit but stale (age: {age:.1f}s) for {cache_key}. Triggering revalidation.")
-                with self._active_updates_lock:
-                    if cache_key not in self._active_updates:
-                        self._active_updates.add(cache_key)
-                        t = threading.Thread(
-                            target=self._async_update_projects_dashboard,
-                            args=(date_from, company_key, cache_key, db_cache_key),
-                            daemon=True
-                        )
-                        t.start()
-                return db_cached
+                # If stale but within 1 hour, return stale instantly and trigger background revalidation
+                if age < 3600:
+                    logger.info(f"SQLite cache hit but stale (age: {age:.1f}s) for {cache_key}. Triggering revalidation.")
+                    with self._active_updates_lock:
+                        if cache_key not in self._active_updates:
+                            self._active_updates.add(cache_key)
+                            t = threading.Thread(
+                                target=self._async_update_projects_dashboard,
+                                args=(date_from, company_key, cache_key, db_cache_key),
+                                daemon=True
+                            )
+                            t.start()
+                    return db_cached
+                
+                # If older than 1 hour, do not return stale cache. Fall through to fetch synchronously!
+                logger.info(f"SQLite cache is too stale (age: {age:.1f}s, > 1 hour) for {cache_key}. Fetching synchronously from Odoo.")
 
         # 3. SQLite cache miss: fetch synchronously from Odoo
         logger.info(f"SQLite cache miss for {cache_key}. Fetching synchronously from Odoo.")
@@ -323,11 +343,7 @@ class DashboardService:
         try:
             return datetime.fromisoformat(date_from.strip()).date().isoformat()
         except ValueError as exc:
-            raise OdooAPIError(
-                "date_from must use YYYY-MM-DD format.",
-                model="sale.order",
-                method="search_read",
-            ) from exc
+            raise ValueError("date_from must use YYYY-MM-DD format.") from exc
 
     def _normalize_company_key(self, company: str | None) -> str:
         normalized = normalized_text(company or "all").strip()
@@ -543,7 +559,7 @@ class DashboardService:
             "account.analytic.line",
             [["account_id", "in", account_ids], ["category", "=", "invoice"]],
             ["id", "name", "amount", "account_id", "move_line_id", "product_id", "category"],
-            limit=1000,
+            limit=100000,
         )
         move_line_ids = sorted(
             {
@@ -971,6 +987,85 @@ class DashboardService:
             profitability_costs,
         )
 
+        # Calculate custom cost breakdown
+        expense_categories = {"expense", "expenses", "vendor_bill", "vendor_bills", "other"}
+        profit_items = profitability_costs.get("items", [])
+        expense_items = [it for it in profit_items if it.get("id") in expense_categories]
+        non_expense_items = [it for it in profit_items if it.get("id") not in expense_categories]
+        
+        total_expense_billed = sum(as_decimal(it["billed"]) for it in expense_items)
+        total_expense_commit = sum(as_decimal(it["open_commitment"]) for it in expense_items)
+        
+        shipping_billed = Decimal("0")
+        shipping_commit = Decimal("0")
+        
+        for source in cost_model.get("cost_sources", []):
+            is_po = source.get("purchase_line_id") is not None or source.get("source") == "po_open_commitment"
+            if is_po:
+                continue
+                
+            dist = source.get("analytic_distribution")
+            if not dist:
+                continue
+                
+            if isinstance(dist, str):
+                try:
+                    dist = json.loads(dist)
+                except Exception:
+                    pass
+                    
+            is_shipping = False
+            if isinstance(dist, dict):
+                for key in dist.keys():
+                    parts = [p.strip() for p in key.split(",")]
+                    if "1519" in parts or "1271" in parts:
+                        is_shipping = True
+                        break
+            
+            if is_shipping:
+                amount = as_decimal(source.get("amount") or 0)
+                if source.get("source") == "posted_actual_cost":
+                    shipping_billed += amount
+                else:
+                    shipping_commit += amount
+                    
+        # Bounding
+        shipping_billed = min(shipping_billed, total_expense_billed)
+        shipping_commit = min(shipping_commit, total_expense_commit)
+        shipping_expected = shipping_billed + shipping_commit
+        
+        other_billed = total_expense_billed - shipping_billed
+        other_commit = total_expense_commit - shipping_commit
+        other_expected = other_billed + other_commit
+        
+        custom_breakdown = []
+        for it in non_expense_items:
+            custom_breakdown.append({
+                "id": it["id"],
+                "label": it.get("label", it["id"]),
+                "billed": as_money(as_decimal(it["billed"])),
+                "open_commitment": as_money(as_decimal(it["open_commitment"])),
+                "expected": as_money(as_decimal(it["expected"])),
+            })
+            
+        if shipping_expected != 0:
+            custom_breakdown.append({
+                "id": "shipping_cost",
+                "label": "Chi phí vận chuyển",
+                "billed": as_money(shipping_billed),
+                "open_commitment": as_money(shipping_commit),
+                "expected": as_money(shipping_expected),
+            })
+            
+        if other_expected != 0:
+            custom_breakdown.append({
+                "id": "other_expense",
+                "label": "Chi phí khác",
+                "billed": as_money(other_billed),
+                "open_commitment": as_money(other_commit),
+                "expected": as_money(other_expected),
+            })
+
         return {
             "project": {
                 "id": project["id"],
@@ -992,6 +1087,7 @@ class DashboardService:
             "summary": summary,
             "cost_summary": self._serialize_cost_summary(cost_model["summary"]),
             "cost_sources": self._serialize_cost_sources(cost_model["cost_sources"]),
+            "custom_cost_breakdown": custom_breakdown,
             "reconciliation": self._serialize_reconciliation(cost_model["reconciliation"]),
             "line_groups": line_groups,
             "project_cost_entries": cost_model["project_cost_entries"],
@@ -1003,7 +1099,7 @@ class DashboardService:
 
     def _get_profitability_costs(self, project_id: int) -> dict[str, Decimal | dict[str, dict[str, Decimal]]]:
         cache_key = f"profitability:{project_id}"
-        cached = self._db_cache.get(cache_key)
+        cached = self._profitability_cache.get(cache_key)
         if cached is not None:
             cached_items = cached.get("items", [])
             return {
@@ -1097,7 +1193,7 @@ class DashboardService:
                 for it in items
             ],
         }
-        self._db_cache.set(cache_key, cache_data)
+        self._profitability_cache.set(cache_key, cache_data)
         
         return result
 
@@ -1464,6 +1560,7 @@ class DashboardService:
                 "balance",
                 "product_id",
                 "purchase_line_id",
+                "analytic_distribution",
             ],
             limit=len(move_line_ids),
         )
@@ -1510,6 +1607,7 @@ class DashboardService:
                     "label": move_line.get("name") or analytic_entry.get("name") or "Posted cost",
                     "date": move_line.get("date") or analytic_entry.get("date"),
                     "purchase_line_id": relation_id(move_line.get("purchase_line_id")),
+                    "analytic_distribution": move_line.get("analytic_distribution"),
                 },
             )
             source["amount"] += amount
@@ -1560,6 +1658,7 @@ class DashboardService:
                     "label": line.get("name") or "Draft vendor bill line",
                     "date": line.get("date"),
                     "purchase_line_id": relation_id(line.get("purchase_line_id")),
+                    "analytic_distribution": line.get("analytic_distribution"),
                 }
             )
         return sources
@@ -1634,6 +1733,7 @@ class DashboardService:
                     "purchase_line_id": line["id"],
                     "raw_amount": raw_amount,
                     "raw_currency": relation_name(line.get("currency_id")),
+                    "analytic_distribution": line.get("analytic_distribution"),
                 }
             )
         return sources, raw_open_total
@@ -2109,64 +2209,71 @@ class DashboardService:
         if not sale_line_ids:
             return {}
 
-        moves = self.client.search_read(
-            "stock.move",
-            [["sale_line_id", "in", sale_line_ids], ["state", "=", "done"]],
-            ["id", "sale_line_id", "picking_id", "stock_valuation_layer_ids"],
-            limit=500,
-        )
-        if not moves:
-            return {}
-
-        svl_ids = sorted(
-            {
-                svl_id
-                for move in moves
-                for svl_id in (move.get("stock_valuation_layer_ids") or [])
-            }
-        )
-        if not svl_ids:
-            return {}
-
-        layers = self.client.search_read(
-            "stock.valuation.layer",
-            [["id", "in", svl_ids]],
-            ["id", "stock_move_id", "value", "description"],
-            limit=1000,
-        )
-
-        moves_by_id = {move["id"]: move for move in moves}
-        cost_map: dict[int, dict[str, Any]] = {}
-
-        for layer in layers:
-            move_ref = layer.get("stock_move_id")
-            if not move_ref:
-                continue
-
-            move = moves_by_id.get(move_ref[0])
-            sale_line_ref = move.get("sale_line_id") if move else None
-            if not sale_line_ref:
-                continue
-
-            sale_line_id = sale_line_ref[0]
-            entry = cost_map.setdefault(
-                sale_line_id,
-                {
-                    "actual_cost": Decimal("0"),
-                    "references": set(),
-                },
+        try:
+            moves = self.client.search_read(
+                "stock.move",
+                [["sale_line_id", "in", sale_line_ids], ["state", "=", "done"]],
+                ["id", "sale_line_id", "picking_id", "stock_valuation_layer_ids"],
+                limit=500,
             )
-            entry["actual_cost"] += as_decimal(abs(layer.get("value") or 0))
+            if not moves:
+                return {}
 
-            if move.get("picking_id"):
-                entry["references"].add(move["picking_id"][1])
-            elif layer.get("description"):
-                entry["references"].add(layer["description"])
+            svl_ids = sorted(
+                {
+                    svl_id
+                    for move in moves
+                    for svl_id in (move.get("stock_valuation_layer_ids") or [])
+                }
+            )
+            if not svl_ids:
+                return {}
 
-        for entry in cost_map.values():
-            entry["reference"] = ", ".join(sorted(entry.pop("references")))
+            layers = self.client.search_read(
+                "stock.valuation.layer",
+                [["id", "in", svl_ids]],
+                ["id", "stock_move_id", "value", "description"],
+                limit=1000,
+            )
 
-        return cost_map
+            moves_by_id = {move["id"]: move for move in moves}
+            cost_map: dict[int, dict[str, Any]] = {}
+
+            for layer in layers:
+                move_ref = layer.get("stock_move_id")
+                if not move_ref:
+                    continue
+
+                move = moves_by_id.get(move_ref[0])
+                sale_line_ref = move.get("sale_line_id") if move else None
+                if not sale_line_ref:
+                    continue
+
+                sale_line_id = sale_line_ref[0]
+                entry = cost_map.setdefault(
+                    sale_line_id,
+                    {
+                        "actual_cost": Decimal("0"),
+                        "references": set(),
+                    },
+                )
+                entry["actual_cost"] += as_decimal(abs(layer.get("value") or 0))
+
+                if move.get("picking_id"):
+                    entry["references"].add(move["picking_id"][1])
+                elif layer.get("description"):
+                    entry["references"].add(layer["description"])
+
+            for entry in cost_map.values():
+                entry["reference"] = ", ".join(sorted(entry.pop("references")))
+
+            return cost_map
+        except Exception as e:
+            logger.warning(
+                f"Stock valuation layers not supported or error fetching stock cost map: {e}. "
+                "Defaulting to empty stock cost map."
+            )
+            return {}
 
     def _build_line_groups(self, lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
         buckets: dict[str, dict[str, Decimal | int | str]] = defaultdict(
@@ -2385,13 +2492,15 @@ class DashboardService:
     def update_project_in_all_caches(self, project_id: int, updates: dict[str, Any]):
         """Cập nhật đè dữ liệu project trong in-memory cache và SQLite cache, hoặc thêm mới nếu là bản ghi đầy đủ."""
         with self._cache_lock:
-            for cache_key, (ts, payload) in self._projects_dashboard_cache.items():
+            for cache_key, (ts, payload) in list(self._projects_dashboard_cache.items()):
                 if "projects" in payload:
                     found = False
+                    updated = False
                     for p in payload["projects"]:
                         if p["project_id"] == project_id:
                             p.update(updates)
                             found = True
+                            updated = True
                             break
                     if not found and "project_name" in updates:
                         parts = cache_key.split(":")
@@ -2406,15 +2515,32 @@ class DashboardService:
                         
                         if comp_match and date_match:
                             payload["projects"].append(updates)
+                            updated = True
                             
+                    if updated:
+                        # Recalculate aggregates for memory payload
+                        rows = payload.get("projects", [])
+                        parts = cache_key.split(":")
+                        c_key = parts[0]
+                        d_from = parts[1] if len(parts) > 1 else "2026-01-01"
+                        
+                        filtered_rows = [row for row in rows if c_key == "all" or not row.get("company_key") or row.get("company_key") == c_key]
+                        filtered_done_rows = [row for row in filtered_rows if row.get("order_state") == "Done"]
+                        done_rows = [row for row in rows if row.get("order_state") == "Done"]
+                        
+                        payload["summary"] = self._build_projects_dashboard_summary(filtered_done_rows)
+                        payload["tag_buckets"] = self._build_tag_buckets(done_rows)
+                        payload["tag_gp_ranks"] = self._build_tag_gp_ranks(done_rows)
+                        payload["meta"] = self._build_projects_dashboard_meta(filtered_rows, filtered_done_rows, d_from, c_key)
+                        
         db_path = self._db_cache.db_path
         with self._db_cache._lock:
             try:
                 import json
                 import sqlite3
                 conn = sqlite3.connect(str(db_path), timeout=30.0)
-                rows = conn.execute("SELECT key, value, created_at FROM cache WHERE key LIKE 'dashboard_payload:%'").fetchall()
-                for key, value_json, created_at in rows:
+                db_rows = conn.execute("SELECT key, value, created_at FROM cache WHERE key LIKE 'dashboard_payload:%'").fetchall()
+                for key, value_json, created_at in db_rows:
                     payload = json.loads(value_json)
                     updated = False
                     if "projects" in payload:
@@ -2437,6 +2563,21 @@ class DashboardService:
                                     payload["projects"].append(updates)
                                     updated = True
                     if updated:
+                        # Recalculate aggregates for SQLite payload
+                        project_rows = payload.get("projects", [])
+                        parts = key.split(":")
+                        c_key = parts[1]
+                        d_from = parts[2]
+                        
+                        filtered_rows = [row for row in project_rows if c_key == "all" or not row.get("company_key") or row.get("company_key") == c_key]
+                        filtered_done_rows = [row for row in filtered_rows if row.get("order_state") == "Done"]
+                        done_rows = [row for row in project_rows if row.get("order_state") == "Done"]
+                        
+                        payload["summary"] = self._build_projects_dashboard_summary(filtered_done_rows)
+                        payload["tag_buckets"] = self._build_tag_buckets(done_rows)
+                        payload["tag_gp_ranks"] = self._build_tag_gp_ranks(done_rows)
+                        payload["meta"] = self._build_projects_dashboard_meta(filtered_rows, filtered_done_rows, d_from, c_key)
+                        
                         conn.execute(
                             "INSERT OR REPLACE INTO cache (key, value, created_at) VALUES (?, ?, ?)",
                             (key, json.dumps(payload), created_at)
@@ -2611,3 +2752,25 @@ class DashboardService:
                 "updated_projects": [],
                 "sync_time": datetime.now(timezone.utc).isoformat()
             }
+
+    def start_background_warmer(self, interval_seconds: int = 900) -> None:
+        self._warmer_stop_event.clear()
+        def run_warmer():
+            # Wait before first run to let Flask start up (or early exit if stop event is set)
+            if self._warmer_stop_event.wait(timeout=min(10, interval_seconds)):
+                return
+            while not self._warmer_stop_event.is_set():
+                try:
+                    logger.info("Proactive Cache Warmer: Starting background refresh...")
+                    self.build_projects_dashboard(date_from="2026-01-01", company="all", refresh=True)
+                    logger.info("Proactive Cache Warmer: Refresh completed successfully.")
+                except Exception as e:
+                    logger.error(f"Proactive Cache Warmer Error: {e}", exc_info=True)
+                
+                # Sleep and check if stop event is set
+                if self._warmer_stop_event.wait(timeout=interval_seconds):
+                    break
+
+        t = threading.Thread(target=run_warmer, name="CacheWarmerThread", daemon=True)
+        t.start()
+        logger.info("Proactive Cache Warmer thread started.")

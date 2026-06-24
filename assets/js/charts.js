@@ -17,43 +17,65 @@ export function renderKPISparklines(projects) {
         if (existing) existing.remove();
     });
 
-    if (!Array.isArray(projects)) return;
-    const validProjects = projects
-        .filter(p => p && p.gp_percent !== null && p.gp_percent !== undefined)
-        .slice(-10);
+    if (!Array.isArray(projects) || projects.length < 2) return;
+
+    // Filter projects that have valid metrics
+    const validProjects = projects.filter(p => p && p.bg_untaxed !== null && p.bg_untaxed !== undefined).slice(-10);
     if (validProjects.length < 2) return;
 
-    const values = validProjects.map(p => p.gp_percent);
-    const minVal = Math.min(...values);
-    const maxVal = Math.max(...values);
-    const valRange = maxVal - minVal || 1;
+    document.querySelectorAll('.kpi-grid > .kpi-card').forEach((card, cardIdx) => {
+        let values = [];
+        let strokeColor = 'var(--color-emerald, #2b6cb0)';
+        
+        if (card.querySelector('#totalProjects')) {
+            // Card 1: Project Count - trend of GP%
+            values = validProjects.map(p => p.gp_percent ?? 0);
+            strokeColor = '#3182ce'; // Blue
+        } else if (card.querySelector('#totalBG')) {
+            // Card 2: Doanh thu - trend of bg_untaxed
+            values = validProjects.map(p => p.bg_untaxed || 0);
+            strokeColor = '#38a169'; // Green
+        } else if (card.querySelector('#totalCost')) {
+            // Card 3: Chi phí - trend of adjusted expected cost
+            values = validProjects.map(p => p.adjusted_expected_cost ?? p.native_expected_cost ?? 0);
+            strokeColor = '#dd6b20'; // Orange
+        } else if (card.querySelector('#weightedGP') || card.querySelector('#totalGP')) {
+            // Card 4: Lợi nhuận gộp - trend of gp_percent
+            values = validProjects.map(p => p.gp_percent ?? 0);
+            strokeColor = '#805ad5'; // Purple
+        } else {
+            return;
+        }
 
-    const width = 240, height = 45, padding = 4;
-    const points = values.map((val, idx) => ({
-        x: (idx / (values.length - 1)) * width,
-        y: height - padding - ((val - minVal) / valRange) * (height - 2 * padding)
-    }));
+        const minVal = Math.min(...values);
+        const maxVal = Math.max(...values);
+        const valRange = maxVal - minVal || 1;
 
-    let pathD = `M ${points[0].x} ${points[0].y}`;
-    for (let i = 0; i < points.length - 1; i++) {
-        const p0 = points[i], p1 = points[i + 1];
-        const cpX = p0.x + (p1.x - p0.x) / 2;
-        pathD += ` C ${cpX} ${p0.y}, ${cpX} ${p1.y}, ${p1.x} ${p1.y}`;
-    }
-    const fillD = `${pathD} L ${points[points.length - 1].x} ${height} L ${points[0].x} ${height} Z`;
+        const width = 240, height = 45, padding = 4;
+        const points = values.map((val, idx) => ({
+            x: (idx / (values.length - 1)) * width,
+            y: height - padding - ((val - minVal) / valRange) * (height - 2 * padding)
+        }));
 
-    document.querySelectorAll('.kpi-card').forEach((card, cardIdx) => {
+        let pathD = `M ${points[0].x} ${points[0].y}`;
+        for (let i = 0; i < points.length - 1; i++) {
+            const p0 = points[i], p1 = points[i + 1];
+            const cpX = p0.x + (p1.x - p0.x) / 2;
+            pathD += ` C ${cpX} ${p0.y}, ${cpX} ${p1.y}, ${p1.x} ${p1.y}`;
+        }
+        const fillD = `${pathD} L ${points[points.length - 1].x} ${height} L ${points[0].x} ${height} Z`;
+
         const gradId = `sparklineGrad-${cardIdx}-${Math.random().toString(36).substr(2, 9)}`;
         const svgHTML = `
             <svg class="kpi-sparkline" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none">
                 <defs>
                     <linearGradient id="${gradId}" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stop-color="var(--color-emerald, #2b6cb0)" stop-opacity="0.28" />
-                        <stop offset="100%" stop-color="var(--color-text-secondary, #64748b)" stop-opacity="0.02" />
+                        <stop offset="0%" stop-color="${strokeColor}" stop-opacity="0.22" />
+                        <stop offset="100%" stop-color="var(--color-bg-base, #1a202c)" stop-opacity="0.01" />
                     </linearGradient>
                 </defs>
                 <path d="${fillD}" fill="url(#${gradId})" />
-                <path d="${pathD}" fill="none" stroke="var(--color-emerald, #2b6cb0)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                <path d="${pathD}" fill="none" stroke="${strokeColor}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
             </svg>
         `;
         card.style.position = 'relative';

@@ -662,3 +662,36 @@ Integrity mode: development
 - [ ] Toàn bộ 5 biểu đồ đồng bộ dữ liệu thời gian thực khi chọn bộ lọc công ty hoặc khoảng thời gian.
 - [ ] Không xảy ra lỗi hiển thị, chồng lấn canvas hoặc lỗi JavaScript trong bảng điều khiển của trình duyệt (Browser Console).
 - [ ] Đồng bộ màu sắc 4 tag chủ đạo xuyên suốt cả 5 biểu đồ.
+
+## Follow-up — 2026-06-24T04:28:17Z
+
+Audit the Bonario ROI Dashboard codebase to identify potential bugs, logic flaws, security vulnerabilities, or performance bottlenecks, and implement comprehensive fixes and UX improvements to ensure a bulletproof, production-grade user experience.
+
+Working directory: c:/Users/Admin/Desktop/Bonario/dashboard-roi-project
+Integrity mode: development
+
+## Requirements
+
+### R1. Codebase Audit and Bug Resolution
+Identify and fix any logical bugs, edge cases, potential exceptions, memory leaks, or race conditions in both backend (Python Flask application, SQLite cache system, Odoo client) and frontend (JavaScript SPA, charts rendering, router).
+
+### R2. Performance Optimization
+Optimize frontend rendering performance (including debounce mechanisms for event handlers, efficient DOM manipulation, Chart.js updates) and backend response latency (database queries, caching strategy, Odoo XML-RPC requests).
+
+### R3. Security Hardening
+Audit backend endpoints to ensure proper session authentication, prevent information disclosure, ensure rate limits are securely enforced, and ensure no credentials or secrets are leaked.
+
+### R4. Automated Testing
+Expand the existing pytest suite with new automated tests to cover all fixed bugs and improved logic, ensuring the entire test suite passes without regressions.
+
+## Acceptance Criteria
+
+### Execution & Cleanliness
+- [ ] No hardcoded secrets, credentials, or private keys in the codebase.
+- [ ] No syntax errors, linting warnings, or runtime exceptions on the frontend/backend.
+- [ ] The local git repository remains on the `master` branch with all modifications kept local (no automatic push to origin).
+
+### Verification
+- [ ] All 32 existing tests in the `tests/` directory pass successfully.
+- [ ] At least 3 new test cases/files are added to the `tests/` directory, testing the new fixes or optimizations.
+- [ ] `python -m pytest` executes and reports 100% success rate.

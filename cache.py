@@ -1,6 +1,7 @@
 """SQLite persistent cache for Odoo API responses."""
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import sqlite3
@@ -23,27 +24,25 @@ class PersistentCache:
 
     def _init_db(self):
         with self._lock:
-            conn = sqlite3.connect(str(self.db_path), timeout=30.0)
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA synchronous=NORMAL")
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS cache (
-                    key TEXT PRIMARY KEY,
-                    value TEXT NOT NULL,
-                    created_at REAL NOT NULL
-                )
-            """)
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_created_at ON cache(created_at)")
-            conn.commit()
-            conn.close()
+            with contextlib.closing(sqlite3.connect(str(self.db_path), timeout=30.0)) as conn:
+                conn.execute("PRAGMA journal_mode=WAL")
+                conn.execute("PRAGMA synchronous=NORMAL")
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS cache (
+                        key TEXT PRIMARY KEY,
+                        value TEXT NOT NULL,
+                        created_at REAL NOT NULL
+                    )
+                """)
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_created_at ON cache(created_at)")
+                conn.commit()
 
     def get(self, key: str) -> dict | None:
         with self._lock:
-            conn = sqlite3.connect(str(self.db_path), timeout=30.0)
-            row = conn.execute(
-                "SELECT value, created_at FROM cache WHERE key = ?", (key,)
-            ).fetchone()
-            conn.close()
+            with contextlib.closing(sqlite3.connect(str(self.db_path), timeout=30.0)) as conn:
+                row = conn.execute(
+                    "SELECT value, created_at FROM cache WHERE key = ?", (key,)
+                ).fetchone()
             if row is None:
                 return None
             value_json, created_at = row
@@ -53,30 +52,27 @@ class PersistentCache:
 
     def set(self, key: str, value: dict):
         with self._lock:
-            conn = sqlite3.connect(str(self.db_path), timeout=30.0)
-            conn.execute(
-                "INSERT OR REPLACE INTO cache (key, value, created_at) VALUES (?, ?, ?)",
-                (key, json.dumps(value), time.time()),
-            )
-            conn.commit()
-            conn.close()
+            with contextlib.closing(sqlite3.connect(str(self.db_path), timeout=30.0)) as conn:
+                conn.execute(
+                    "INSERT OR REPLACE INTO cache (key, value, created_at) VALUES (?, ?, ?)",
+                    (key, json.dumps(value), time.time()),
+                )
+                conn.commit()
 
     def clear(self, prefix: str = ""):
         with self._lock:
-            conn = sqlite3.connect(str(self.db_path), timeout=30.0)
-            if prefix:
-                conn.execute("DELETE FROM cache WHERE key LIKE ?", (f"{prefix}%",))
-            else:
-                conn.execute("DELETE FROM cache")
-            conn.commit()
-            conn.close()
+            with contextlib.closing(sqlite3.connect(str(self.db_path), timeout=30.0)) as conn:
+                if prefix:
+                    conn.execute("DELETE FROM cache WHERE key LIKE ?", (f"{prefix}%",))
+                else:
+                    conn.execute("DELETE FROM cache")
+                conn.commit()
 
     def cleanup_expired(self):
         with self._lock:
-            conn = sqlite3.connect(str(self.db_path), timeout=30.0)
-            conn.execute(
-                "DELETE FROM cache WHERE ? - created_at > ?",
-                (time.time(), self.ttl),
-            )
-            conn.commit()
-            conn.close()
+            with contextlib.closing(sqlite3.connect(str(self.db_path), timeout=30.0)) as conn:
+                conn.execute(
+                    "DELETE FROM cache WHERE ? - created_at > ?",
+                    (time.time(), self.ttl),
+                )
+                conn.commit()

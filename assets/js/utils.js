@@ -142,7 +142,10 @@ export function showToast(message, type = 'success') {
     }
     
     toast.style.backgroundColor = bg;
-    toast.innerHTML = `${icon}<span>${message}</span>`;
+    toast.innerHTML = icon;
+    const span = document.createElement('span');
+    span.textContent = message;
+    toast.appendChild(span);
     container.appendChild(toast);
     
     setTimeout(() => {
@@ -162,3 +165,13 @@ export function showToast(message, type = 'success') {
     }, 3500);
 }
 
+export function normalizeText(str) {
+    if (str === null || str === undefined) return '';
+    return String(str)
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/đ/g, 'd')
+        .replace(/Đ/g, 'D')
+        .trim()
+        .toLowerCase();
+}

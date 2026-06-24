@@ -172,6 +172,7 @@ html, body {
   border-radius: 50%;
   filter: blur(80px);
   opacity: 0.12;
+  will-change: transform, opacity;
 }
 
 .orb-1 {
@@ -249,6 +250,7 @@ html, body {
   border-radius: 50%;
   opacity: 0;
   animation: floatUpward 18s infinite linear;
+  will-change: transform, opacity;
 }
 
 @keyframes floatUpward {

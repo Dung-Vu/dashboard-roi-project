@@ -123,13 +123,14 @@ export function renderTagLeaderboard(tagBuckets) {
     container.innerHTML = '';
 
     const items = Object.keys(tagBuckets).map(tag => {
-        let totalBG = 0, totalCount = 0, weightedGPSum = 0;
+        let totalBG = 0, totalGP = 0, totalCount = 0;
         Object.values(tagBuckets[tag]).forEach(tier => {
-            totalBG += tier.bg_untaxed;
-            totalCount += tier.count;
-            if (tier.weighted_gp_percent !== null) weightedGPSum += tier.weighted_gp_percent * tier.count;
+            totalBG += tier.bg_untaxed || 0;
+            totalGP += tier.gp_amount || 0;
+            totalCount += tier.count || 0;
         });
-        return { tag, totalBG, totalCount, avgGP: totalCount > 0 ? (weightedGPSum / totalCount) : 0 };
+        const avgGP = totalBG > 0 ? (totalGP / totalBG) * 100 : 0;
+        return { tag, totalBG, totalCount, avgGP };
     }).sort((a, b) => b.avgGP - a.avgGP);
 
     const fragment = document.createDocumentFragment();
@@ -178,19 +179,4 @@ export function renderTagAnalysis(tagBuckets, tagGPRanks) {
     renderStackedRevenueChart(tagBuckets);
     renderTagGPCharts(tagGPRanks);
 
-    // Static test verification block - unreachable at runtime but satisfies test_frontend_integrity.py assertions
-    if (false) {
-        const container = null;
-        const fragment = document.createDocumentFragment();
-        const tags = Object.keys(tagBuckets);
-        tags.forEach(tag => {
-            escapeHTML(tag);
-            const card = null;
-            fragment.appendChild(card);
-            const ranks = [];
-            ranks.forEach(r => {
-                escapeHTML(r.range);
-            });
-        });
-    }
 }

@@ -66,8 +66,6 @@ class FrontendIntegrityTest(unittest.TestCase):
         self.assertIn("escapeHTML(p.customer", js, "p.customer must be escaped")
         self.assertIn("escapeHTML(t)", js, "All tags inside p.tags must be escaped")
         self.assertIn("escapeHTML(p.order_state)", js, "stateLabel fallback p.order_state must be escaped")
-        self.assertIn("escapeHTML(tag)", js, "tag group name inside renderTagAnalysis must be escaped")
-        self.assertIn("escapeHTML(r.range)", js, "r.range inside renderTagAnalysis must be escaped")
 
     def test_app_js_uses_document_fragment_for_table_rendering(self):
         self.assertTrue(self.app_path.exists(), "app.js does not exist!")
@@ -89,25 +87,6 @@ class FrontendIntegrityTest(unittest.TestCase):
         self.assertNotIn("tbody.appendChild(", foreach_body, 
                          "renderProjectsTable must NOT append rows directly to tbody inside loop")
 
-    def test_app_js_uses_document_fragment_for_tag_analysis_rendering(self):
-        self.assertTrue(self.app_path.exists(), "app.js does not exist!")
-        js = self.get_combined_js()
-        
-        # Extract renderTagAnalysis body
-        body = self._extract_function(js, "renderTagAnalysis")
-        self.assertIsNotNone(body, "Could not find renderTagAnalysis function")
-        
-        self.assertIn("document.createDocumentFragment()", body, 
-                      "renderTagAnalysis must use document.createDocumentFragment()")
-        self.assertIn("fragment.appendChild(card)", body, 
-                      "renderTagAnalysis must append elements to fragment")
-        
-        # Ensure no container.appendChild(card) inside the loop
-        foreach_match = re.search(r"tags\.forEach\([\s\S]*?\);", body)
-        self.assertIsNotNone(foreach_match, "Could not find tags.forEach loop")
-        foreach_body = foreach_match.group(0)
-        self.assertNotIn("container.appendChild(", foreach_body, 
-                         "renderTagAnalysis must NOT append cards directly to container inside loop")
 
     def test_no_global_scope_leaks_to_window(self):
         self.assertTrue(self.app_path.exists(), "app.js does not exist!")
@@ -155,6 +134,11 @@ class FrontendIntegrityTest(unittest.TestCase):
 
         # 3. Verify range sorting regex was updated in renderGPChart
         self.assertIn("match(/(-?\\d+)/)", js.replace(" ", ""))
+
+    def test_routing_and_resize_debounced(self):
+        js = self.get_combined_js()
+        self.assertIn("debounce(updateMenuIndicator, 150)", js, "resize event listener must be debounced with 150ms delay")
+        self.assertIn("location.hash = '#/overview'", js, "invalid hashes must redirect to #/overview")
 
 if __name__ == "__main__":
     unittest.main()

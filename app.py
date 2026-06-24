@@ -15,8 +15,62 @@ from odoo_client import OdooAPI, OdooAPIError
 BASE_DIR = Path(__file__).resolve().parent
 
 
+import time
+import sqlite3
+import contextlib
+from threading import Lock
+from cache import CACHE_DB_PATH
+
+class LoginRateLimiter:
+    def __init__(self, max_attempts: int = 5, period: int = 300, db_path: Path | None = None):
+        self.max_attempts = max_attempts
+        self.period = period
+        self.db_path = db_path or CACHE_DB_PATH
+        self.lock = Lock()
+        self._init_db()
+
+    def _init_db(self):
+        with self.lock:
+            with contextlib.closing(sqlite3.connect(str(self.db_path), timeout=30.0)) as conn:
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS login_attempts (
+                        ip TEXT,
+                        timestamp REAL
+                    )
+                """)
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_login_attempts_ip_ts ON login_attempts(ip, timestamp)")
+                conn.commit()
+
+    def is_rate_limited(self, ip: str) -> bool:
+        with self.lock:
+            now = time.time()
+            cutoff = now - self.period
+            with contextlib.closing(sqlite3.connect(str(self.db_path), timeout=30.0)) as conn:
+                # Clean up old attempts
+                conn.execute("DELETE FROM login_attempts WHERE timestamp < ?", (cutoff,))
+                conn.commit()
+                # Count current attempts
+                row = conn.execute(
+                    "SELECT COUNT(*) FROM login_attempts WHERE ip = ? AND timestamp >= ?",
+                    (ip, cutoff)
+                ).fetchone()
+                count = row[0] if row else 0
+                return count >= self.max_attempts
+
+    def record_failed_attempt(self, ip: str):
+        with self.lock:
+            now = time.time()
+            with contextlib.closing(sqlite3.connect(str(self.db_path), timeout=30.0)) as conn:
+                conn.execute(
+                    "INSERT INTO login_attempts (ip, timestamp) VALUES (?, ?)",
+                    (ip, now)
+                )
+                conn.commit()
+
+
 def create_app() -> Flask:
     settings = get_settings()
+    limiter = LoginRateLimiter()
 
     logging.basicConfig(
         level=logging.DEBUG if settings.debug else logging.INFO,
@@ -33,6 +87,15 @@ def create_app() -> Flask:
 
     app = Flask(__name__)
     app.secret_key = settings.secret_key
+    app.config.update(
+        SESSION_COOKIE_SECURE=False,
+        SESSION_COOKIE_HTTPONLY=True,
+        SESSION_COOKIE_SAMESITE="Lax"
+    )
+
+    import sys
+    if not (app.config.get("TESTING") or "unittest" in sys.modules or "pytest" in sys.modules):
+        service.start_background_warmer(interval_seconds=900)
 
     def require_auth(f):
         @wraps(f)
@@ -47,12 +110,18 @@ def create_app() -> Flask:
 
     @app.post("/api/login")
     def login():
+        ip = request.remote_addr or "unknown"
+        if limiter.is_rate_limited(ip):
+            return jsonify({"ok": False, "error": "Quá nhiều lần thử đăng nhập thất bại. Vui lòng thử lại sau 5 phút."}), 429
+
         body = request.get_json() or {}
         username = body.get("username", "")
         password = body.get("password", "")
         if username.lower() == settings.dashboard_username.lower() and password == settings.dashboard_password:
             session["authenticated"] = True
             return jsonify({"ok": True})
+        
+        limiter.record_failed_attempt(ip)
         return jsonify({"ok": False, "error": "Sai tên đăng nhập hoặc mật khẩu"}), 401
 
     @app.post("/api/logout")
@@ -181,13 +250,22 @@ def create_app() -> Flask:
         if settings.odoo_user_id:
             sensitive_terms.append(str(settings.odoo_user_id))
             
+        import re
         unique_terms = sorted(list(set(term for term in sensitive_terms if term and len(term) > 2)), key=len, reverse=True)
         for term in unique_terms:
-            message = message.replace(term, "********")
+            if term.isalnum() or re.match(r'^\w+$', term):
+                message = re.sub(rf'\b{re.escape(term)}\b', '********', message)
+            else:
+                message = message.replace(term, "********")
         return message
+
+    @app.errorhandler(ValueError)
+    def handle_value_error(error: ValueError):
+        return jsonify({"ok": False, "error": str(error)}), 400
 
     @app.errorhandler(OdooAPIError)
     def handle_odoo_error(error: OdooAPIError):
+        app.logger.error(f"OdooAPIError occurred: {error} (model: {error.model}, method: {error.method})", exc_info=True)
         payload = {
             "ok": False,
             "error": "Cannot load dashboard data from Odoo",

@@ -22,6 +22,7 @@ class OdooAPIError(Exception):
 
 class OdooAPI:
     def __init__(self, url: str, db: str, user_id: int, api_key: str):
+        import threading
         base_url = url.rstrip("/")
         if base_url.endswith("/jsonrpc"):
             base_url = base_url[: -len("/jsonrpc")]
@@ -34,7 +35,10 @@ class OdooAPI:
         self.timeout = (5, 60)
         self.request_counter = itertools.count(1)
 
-        retry = Retry(
+        self._thread_local = threading.local()
+        self._sessions_lock = threading.Lock()
+        self._sessions: list[requests.Session] = []
+        self._retry = Retry(
             total=3,
             backoff_factor=1,
             backoff_jitter=0.5,
@@ -42,12 +46,19 @@ class OdooAPI:
             allowed_methods=["GET", "POST"],
             raise_on_status=False,
         )
-        adapter = HTTPAdapter(pool_connections=30, pool_maxsize=30, max_retries=retry)
-
-        self.session = requests.Session()
-        self.session.mount("http://", adapter)
-        self.session.mount("https://", adapter)
+        self._adapter = HTTPAdapter(pool_connections=30, pool_maxsize=30, max_retries=self._retry)
         atexit.register(self.close)
+
+    @property
+    def session(self) -> requests.Session:
+        if not hasattr(self._thread_local, "session"):
+            session = requests.Session()
+            session.mount("http://", self._adapter)
+            session.mount("https://", self._adapter)
+            self._thread_local.session = session
+            with self._sessions_lock:
+                self._sessions.append(session)
+        return self._thread_local.session
 
     def _sanitize(self, text: str) -> str:
         if not text:
@@ -75,7 +86,7 @@ class OdooAPI:
         if hasattr(self, "uid") and self.uid:
             sensitive_terms.append(str(self.uid))
             
-        unique_terms = sorted(list(set(term for term in sensitive_terms if term and len(term) > 2)), key=len, reverse=True)
+        unique_terms = sorted(list(set(term for term in sensitive_terms if term and len(term) > 3)), key=len, reverse=True)
         for term in unique_terms:
             text = text.replace(term, "********")
         return text
@@ -162,6 +173,11 @@ class OdooAPI:
         return {"ok": True, "user": users[0]}
 
     def close(self) -> None:
-        if hasattr(self, "session") and self.session:
-            self.session.close()
-            logger.debug("Closed Odoo JSON-RPC session")
+        with self._sessions_lock:
+            for session in self._sessions:
+                try:
+                    session.close()
+                except Exception:
+                    pass
+            self._sessions.clear()
+        logger.debug("Closed all Odoo JSON-RPC sessions")
