@@ -136,6 +136,74 @@ class DashboardService:
         sale_orders_by_id = {so_id: sale_orders_by_id[so_id] for so_id in filtered_so_ids if so_id in sale_orders_by_id}
         analytic_adjustments = self._build_dashboard_analytic_adjustments(projects, sale_orders_by_id)
 
+        # Precalculate shipping costs map for the projects
+        shipping_cost_by_project = {}
+        account_ids = sorted(set(relation_id(p.get("account_id")) for p in projects if relation_id(p.get("account_id"))))
+        if account_ids:
+            try:
+                import json
+                # Fetch analytic lines for these accounts
+                analytic_lines = self.client.search_read(
+                    "account.analytic.line",
+                    [["account_id", "in", account_ids], ["category", "!=", "invoice"]],
+                    ["id", "amount", "account_id", "move_line_id"],
+                    limit=100000
+                )
+                move_line_ids = sorted({
+                    line["move_line_id"][0]
+                    for line in analytic_lines
+                    if line.get("move_line_id")
+                })
+                if move_line_ids:
+                    # Batch fetch move lines
+                    move_lines = []
+                    chunk_size = 500
+                    for i in range(0, len(move_line_ids), chunk_size):
+                        chunk = move_line_ids[i:i+chunk_size]
+                        chunk_lines = self.client.search_read(
+                            "account.move.line",
+                            [["id", "in", chunk]],
+                            ["id", "analytic_distribution", "parent_state", "move_type", "balance"],
+                            limit=len(chunk)
+                        )
+                        move_lines.extend(chunk_lines)
+                    
+                    move_line_map = {ml["id"]: ml for ml in move_lines}
+                    for line in analytic_lines:
+                        ml_ref = line.get("move_line_id")
+                        if not ml_ref:
+                            continue
+                        ml = move_line_map.get(ml_ref[0])
+                        if not ml or ml.get("parent_state") != "posted":
+                            continue
+                        if ml.get("move_type") in {"out_invoice", "out_refund", "out_receipt"}:
+                            continue
+                        
+                        dist = ml.get("analytic_distribution")
+                        if not dist:
+                            continue
+                        if isinstance(dist, str):
+                            try:
+                                dist = json.loads(dist)
+                            except Exception:
+                                pass
+                        if not isinstance(dist, dict):
+                            continue
+                        
+                        is_shipping = False
+                        for key in dist.keys():
+                            parts = [p.strip() for p in key.split(",")]
+                            if "1519" in parts or "1271" in parts:
+                                is_shipping = True
+                                break
+                        
+                        if is_shipping:
+                            acc_id = line["account_id"][0]
+                            balance = float(ml.get("balance") or 0)
+                            shipping_cost_by_project[acc_id] = shipping_cost_by_project.get(acc_id, 0.0) + balance
+            except Exception as e:
+                logger.error(f"Error precalculating shipping costs in dashboard fetch: {e}", exc_info=True)
+
         rows: list[dict[str, Any]] = []
         if projects:
             worker_count = min(PROJECTS_DASHBOARD_MAX_WORKERS, len(projects))
@@ -151,6 +219,7 @@ class DashboardService:
                         sale_orders_by_id,
                         tag_map,
                         analytic_adjustments,
+                        shipping_cost_by_project,
                     )
                     for project in projects
                 ]
@@ -651,6 +720,7 @@ class DashboardService:
         sale_orders_by_id: dict[int, dict[str, Any]],
         tag_map: dict[int, list[str]],
         analytic_adjustments: dict[int, dict[str, Any]],
+        shipping_cost_by_project: dict[int, float] | None = None,
     ) -> dict[str, Any]:
         sale_order_id = relation_id(project.get("sale_order_id"))
         sale_order = sale_orders_by_id.get(sale_order_id or 0, {})
@@ -684,6 +754,12 @@ class DashboardService:
             or self._company_key_from_ref(project.get("company_id"))
             or ""
         )
+
+        account_id = relation_id(project.get("account_id"))
+        shipping_cost = 0.0
+        if shipping_cost_by_project and account_id in shipping_cost_by_project:
+            shipping_cost = shipping_cost_by_project[account_id]
+
         return {
             "project_id": project["id"],
             "project_name": project.get("name") or "",
@@ -704,6 +780,7 @@ class DashboardService:
             "cost_removed_amount": as_money(foreign_cost_removed),
             "cost_added_amount": as_money(foreign_cost_added),
             "cost_breakdown": cost_breakdown_items,
+            "shipping_cost": shipping_cost,
             "gp_amount": as_money(gp_amount),
             "gp_percent": gp_percent,
         }

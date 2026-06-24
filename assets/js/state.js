@@ -16,6 +16,7 @@ export const state = {
     pendingUIState: {},
     gpRangeFilter: null,
     monthlyTrendChart: null,
+    monthlyShippingTrendChart: null,
     revenueTierFilter: null,
     stackedRevenueChart: null,
     tagCharts: null

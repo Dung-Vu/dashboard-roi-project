@@ -760,3 +760,145 @@ export function renderStackedRevenueChart(tagBuckets) {
     });
 }
 
+export function renderMonthlyShippingTrendChart(projects) {
+    const canvas = document.getElementById('monthlyShippingTrendChart');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    
+    if (state.monthlyShippingTrendChart) {
+        state.monthlyShippingTrendChart.destroy();
+        state.monthlyShippingTrendChart = null;
+    }
+    
+    const activeProjects = (projects || []).filter(p => p.date_order && (p.shipping_cost > 0 || p.order_state === 'Done' || p.order_state === 'In progress'));
+    const monthlyData = {};
+    activeProjects.forEach(p => {
+        const date = new Date(p.date_order);
+        if (isNaN(date.getTime())) return;
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const key = `${year}-${month}`;
+        if (!monthlyData[key]) {
+            monthlyData[key] = {
+                label: `Tháng ${month}/${year}`,
+                totalShipping: 0,
+                projectCount: 0
+            };
+        }
+        monthlyData[key].totalShipping += p.shipping_cost || 0;
+        if (p.shipping_cost > 0) {
+            monthlyData[key].projectCount += 1;
+        }
+    });
+    
+    const sortedKeys = Object.keys(monthlyData).sort();
+    const labels = sortedKeys.map(k => monthlyData[k].label);
+    const shippingData = sortedKeys.map(k => monthlyData[k].totalShipping);
+    const countData = sortedKeys.map(k => monthlyData[k].projectCount);
+
+    const style = getComputedStyle(document.documentElement);
+    const textColorPrimary = style.getPropertyValue('--color-text-primary').trim() || '#1e293b';
+    const textColorSecondary = style.getPropertyValue('--color-text-secondary').trim() || '#64748b';
+    const colorEmerald = style.getPropertyValue('--color-emerald').trim() || '#10b981';
+
+    state.monthlyShippingTrendChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [
+                {
+                    label: 'Chi phí vận chuyển (VND)',
+                    data: shippingData,
+                    backgroundColor: 'rgba(239, 68, 68, 0.75)',
+                    borderColor: '#ef4444',
+                    borderWidth: 1.5,
+                    borderRadius: 4,
+                    yAxisID: 'y'
+                },
+                {
+                    label: 'Số lượng dự án phát sinh',
+                    data: countData,
+                    type: 'line',
+                    borderColor: colorEmerald,
+                    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                    borderWidth: 3,
+                    pointRadius: 5,
+                    pointHoverRadius: 7,
+                    fill: false,
+                    tension: 0.3,
+                    yAxisID: 'y1'
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: {
+                mode: 'index',
+                intersect: false
+            },
+            plugins: {
+                legend: {
+                    position: 'top',
+                    labels: { 
+                        color: textColorPrimary, 
+                        font: { family: "'Outfit', sans-serif", size: 12, weight: '500' } 
+                    }
+                },
+                tooltip: {
+                    backgroundColor: 'rgba(30, 41, 59, 0.95)',
+                    titleColor: '#f4f7f5',
+                    bodyColor: '#ffffff',
+                    padding: 10,
+                    titleFont: { family: "'Outfit', sans-serif", weight: '600' },
+                    bodyFont: { family: "'Outfit', sans-serif" },
+                    callbacks: {
+                        label: function(context) {
+                            const val = context.raw;
+                            if (context.datasetIndex === 0) {
+                                return ` Chi phí: ${new Intl.NumberFormat('vi-VN').format(val)} ₫`;
+                            }
+                            return ` Dự án: ${val} dự án`;
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    ticks: { 
+                        color: textColorSecondary, 
+                        font: { family: "'Outfit', sans-serif", size: 11, weight: '600' } 
+                    },
+                    grid: { color: 'rgba(148,163,184,0.06)' }
+                },
+                y: {
+                    position: 'left',
+                    ticks: {
+                        color: textColorSecondary,
+                        font: { family: "'Outfit', sans-serif", size: 10, weight: '600' },
+                        callback: function(value) {
+                            if (value >= 1e6) return (value / 1e6).toFixed(1) + ' tr';
+                            if (value >= 1e3) return (value / 1e3).toFixed(1) + ' k';
+                            return value;
+                        }
+                    },
+                    grid: { color: 'rgba(148,163,184,0.06)' }
+                },
+                y1: {
+                    position: 'right',
+                    grid: { drawOnChartArea: false },
+                    ticks: {
+                        color: textColorSecondary,
+                        font: { family: "'Outfit', sans-serif", size: 10, weight: '600' },
+                        stepSize: 1,
+                        callback: function(value) {
+                            return value + ' DA';
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
+

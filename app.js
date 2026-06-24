@@ -1,7 +1,7 @@
 import { state, applySavedUIState, saveUIState } from './assets/js/state.js';
 import { debounce, showToast, escapeHTML, formatFullVND } from './assets/js/utils.js';
 import { fetchDashboard } from './assets/js/api.js';
-import { renderKPISparklines, renderGPChart, renderRevenueDoughnut, renderMonthlyTrendChart } from './assets/js/charts.js';
+import { renderKPISparklines, renderGPChart, renderRevenueDoughnut, renderMonthlyTrendChart, renderMonthlyShippingTrendChart } from './assets/js/charts.js';
 import { renderKPIs } from './assets/js/components/dashboard-kpi.js';
 import { renderOperationalPanels, renderTagAnalysis, renderTagLeaderboard } from './assets/js/components/ops-panels.js';
 import {
@@ -65,6 +65,10 @@ function handleRouting() {
             state.monthlyTrendChart.destroy();
             state.monthlyTrendChart = null;
         }
+        if (state.monthlyShippingTrendChart) {
+            state.monthlyShippingTrendChart.destroy();
+            state.monthlyShippingTrendChart = null;
+        }
     }
 
     if (hash !== '#/tags') {
@@ -101,6 +105,11 @@ function handleRouting() {
             renderMonthlyTrendChart(state.dashboardData.projects);
         } else {
             state.monthlyTrendChart.resize();
+        }
+        if (!state.monthlyShippingTrendChart) {
+            renderMonthlyShippingTrendChart(state.dashboardData.projects);
+        } else {
+            state.monthlyShippingTrendChart.resize();
         }
         renderTagLeaderboard(state.dashboardData.tag_buckets);
     }
@@ -185,6 +194,10 @@ async function loadDashboard(refresh = false) {
         if (state.monthlyTrendChart) {
             state.monthlyTrendChart.destroy();
             state.monthlyTrendChart = null;
+        }
+        if (state.monthlyShippingTrendChart) {
+            state.monthlyShippingTrendChart.destroy();
+            state.monthlyShippingTrendChart = null;
         }
         if (state.stackedRevenueChart) {
             state.stackedRevenueChart.destroy();
@@ -315,10 +328,12 @@ async function runIncrementalSync() {
                     if (state.gpChart) state.gpChart.destroy();
                     if (state.revenueDoughnutChart) state.revenueDoughnutChart.destroy();
                     if (state.monthlyTrendChart) state.monthlyTrendChart.destroy();
+                    if (state.monthlyShippingTrendChart) state.monthlyShippingTrendChart.destroy();
                     
                     renderGPChart(state.dashboardData.tag_gp_ranks);
                     renderRevenueDoughnut(state.dashboardData.tag_buckets);
                     renderMonthlyTrendChart(state.dashboardData.projects);
+                    renderMonthlyShippingTrendChart(state.dashboardData.projects);
                     renderTagLeaderboard(state.dashboardData.tag_buckets);
                 } else if (hash === '#/tags') {
                     if (state.stackedRevenueChart) {
