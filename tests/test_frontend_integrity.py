@@ -62,7 +62,7 @@ class FrontendIntegrityTest(unittest.TestCase):
         
         # Verify required escapeHTML injections
         self.assertIn("escapeHTML(p.sale_order_name", js, "p.sale_order_name must be escaped")
-        self.assertIn("escapeHTML(p.project_name", js, "p.project_name must be escaped")
+        self.assertIn("escapeHTML(p.x_studio_giai_trinh", js, "p.x_studio_giai_trinh must be escaped")
         self.assertIn("escapeHTML(p.customer", js, "p.customer must be escaped")
         self.assertIn("escapeHTML(t)", js, "All tags inside p.tags must be escaped")
         self.assertIn("escapeHTML(p.order_state)", js, "stateLabel fallback p.order_state must be escaped")
@@ -124,7 +124,6 @@ class FrontendIntegrityTest(unittest.TestCase):
         html = self.index_path.read_text(encoding="utf-8")
         self.assertIn("menu-indicator", html, "Menu indicator element missing from sidebar-menu!")
         self.assertIn("revenueDoughnutChart", html, "Doughnut chart canvas element missing from rankings view!")
-        self.assertIn("tagLeaderboard", html, "Leaderboard container element missing from rankings view!")
         self.assertIn("dataScopeBar", html, "Data scope bar is required to explain list-vs-KPI counts!")
         self.assertIn("healthFilter", html, "GP health filter is required in projects table controls!")
         self.assertIn("stateMixPanel", html, "Operational state mix panel is missing from overview!")

@@ -14,7 +14,11 @@ export const state = {
     sortDirection: 'asc',
     company: DEFAULT_COMPANY,
     pendingUIState: {},
-    gpRangeFilter: null
+    gpRangeFilter: null,
+    monthlyTrendChart: null,
+    revenueTierFilter: null,
+    stackedRevenueChart: null,
+    tagCharts: null
 };
 
 export function loadUIState() {
@@ -37,6 +41,7 @@ export function saveUIState() {
         sortDirection: state.sortDirection,
         route: location.hash || '#/overview',
         gpRangeFilter: state.gpRangeFilter,
+        revenueTierFilter: state.revenueTierFilter,
     };
     state.pendingUIState = saved;
     try {
@@ -82,6 +87,7 @@ export function applySavedUIState() {
     state.sortColumn = state.pendingUIState.sortColumn || null;
     state.sortDirection = state.pendingUIState.sortDirection === 'desc' ? 'desc' : 'asc';
     state.gpRangeFilter = state.pendingUIState.gpRangeFilter || null;
+    state.revenueTierFilter = state.pendingUIState.revenueTierFilter || null;
 }
 
 export function applyPendingFilterSelections() {

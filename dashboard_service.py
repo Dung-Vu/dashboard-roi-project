@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 TWO_DECIMALS = Decimal("0.01")
 PROJECTS_DASHBOARD_TTL_SECONDS = 1800  # 30 minutes
-PROJECTS_DASHBOARD_MAX_WORKERS = 24
+PROJECTS_DASHBOARD_MAX_WORKERS = 8
 DASHBOARD_TARGET_TAGS = ("Nội thất rời", "Giấy dán tường", "Rèm", "Vải nội thất")
 EXCLUDED_SALESPERSONS = ("CEO office", "Đỗ Thị Hải Yến", "CEO office, Đỗ Thị Hải Yến")
 BG_TIERS = (
@@ -453,7 +453,7 @@ class DashboardService:
             "search_read",
             [[["sale_order_id", "in", sale_order_ids]]],
             {
-                "fields": ["id", "name", "partner_id", "sale_order_id", "account_id", "company_id", "active"],
+                "fields": ["id", "name", "partner_id", "sale_order_id", "account_id", "company_id", "active", "x_studio_giai_trinh"],
                 "context": {"active_test": False},
             },
         )
@@ -639,9 +639,21 @@ class DashboardService:
         sale_order_id = relation_id(project.get("sale_order_id"))
         sale_order = sale_orders_by_id.get(sale_order_id or 0, {})
         bg_untaxed = as_decimal(sale_order.get("amount_untaxed"))
+        profitability_costs = self._get_profitability_costs(project["id"])
         native_expected_cost = as_decimal(
-            self._get_profitability_costs(project["id"])["expected_cost_total"]
+            profitability_costs["expected_cost_total"]
         )
+        cost_breakdown_items = [
+            {
+                "id": it["id"],
+                "label": it.get("label", it["id"]),
+                "billed": as_money(as_decimal(it["billed"])),
+                "open_commitment": as_money(as_decimal(it["open_commitment"])),
+                "expected": as_money(as_decimal(it["expected"])),
+            }
+            for it in profitability_costs.get("items", [])
+            if as_decimal(it["expected"]) != 0
+        ]
         adjustments = analytic_adjustments.get(project["id"], {})
         foreign_cost_removed = as_decimal(adjustments.get("foreign_cost_removed"))
         foreign_cost_added = as_decimal(adjustments.get("foreign_cost_added"))
@@ -659,6 +671,7 @@ class DashboardService:
         return {
             "project_id": project["id"],
             "project_name": project.get("name") or "",
+            "x_studio_giai_trinh": project.get("x_studio_giai_trinh") or "",
             "sale_order_id": sale_order_id,
             "sale_order_name": sale_order.get("name") or relation_name(project.get("sale_order_id")),
             "customer": relation_name(sale_order.get("partner_id")) or relation_name(project.get("partner_id")),
@@ -674,6 +687,7 @@ class DashboardService:
             "cost_adjustment_amount": as_money(cost_adjustment_amount),
             "cost_removed_amount": as_money(foreign_cost_removed),
             "cost_added_amount": as_money(foreign_cost_added),
+            "cost_breakdown": cost_breakdown_items,
             "gp_amount": as_money(gp_amount),
             "gp_percent": gp_percent,
         }
@@ -991,12 +1005,23 @@ class DashboardService:
         cache_key = f"profitability:{project_id}"
         cached = self._db_cache.get(cache_key)
         if cached is not None:
+            cached_items = cached.get("items", [])
             return {
                 "billed_cost_total": as_decimal(cached.get("billed_cost_total")),
                 "open_commitment_total": as_decimal(cached.get("open_commitment_total")),
                 "expected_cost_total": as_decimal(cached.get("expected_cost_total")),
                 "breakdown": {k: {kk: as_decimal(vv) for kk, vv in v.items()} for k, v in cached.get("breakdown", {}).items()},
-                "items": [],
+                "items": [
+                    {
+                        "id": it.get("id", ""),
+                        "label": it.get("label", ""),
+                        "type": it.get("type"),
+                        "billed": as_decimal(it.get("billed")),
+                        "open_commitment": as_decimal(it.get("open_commitment")),
+                        "expected": as_decimal(it.get("expected")),
+                    }
+                    for it in cached_items
+                ],
             }
         try:
             panel = self.client.call_method("project.project", "get_panel_data", [[project_id]])
@@ -1060,6 +1085,17 @@ class DashboardService:
             "open_commitment_total": str(open_commitment_total),
             "expected_cost_total": str(billed_cost_total + open_commitment_total),
             "breakdown": {k: {kk: str(vv) for kk, vv in v.items()} for k, v in breakdown.items()},
+            "items": [
+                {
+                    "id": it["id"],
+                    "label": it["label"],
+                    "type": it.get("type"),
+                    "billed": str(it["billed"]),
+                    "open_commitment": str(it["open_commitment"]),
+                    "expected": str(it["expected"]),
+                }
+                for it in items
+            ],
         }
         self._db_cache.set(cache_key, cache_data)
         
@@ -2331,3 +2367,247 @@ class DashboardService:
             )
 
         return alerts
+
+    def update_project_giai_trinh(self, project_id: int, new_value: str) -> bool:
+        """Cập nhật trường Giải trình (x_studio_giai_trinh) lên Odoo và đồng bộ cache."""
+        try:
+            self.client.call_method(
+                "project.project",
+                "write",
+                [[project_id], {"x_studio_giai_trinh": new_value}],
+            )
+            self.update_project_in_all_caches(project_id, {"x_studio_giai_trinh": new_value})
+            return True
+        except Exception as e:
+            logger.error(f"Failed to update project {project_id} x_studio_giai_trinh in Odoo: {e}", exc_info=True)
+            return False
+
+    def update_project_in_all_caches(self, project_id: int, updates: dict[str, Any]):
+        """Cập nhật đè dữ liệu project trong in-memory cache và SQLite cache, hoặc thêm mới nếu là bản ghi đầy đủ."""
+        with self._cache_lock:
+            for cache_key, (ts, payload) in self._projects_dashboard_cache.items():
+                if "projects" in payload:
+                    found = False
+                    for p in payload["projects"]:
+                        if p["project_id"] == project_id:
+                            p.update(updates)
+                            found = True
+                            break
+                    if not found and "project_name" in updates:
+                        parts = cache_key.split(":")
+                        c_key = parts[0]
+                        d_from = parts[1] if len(parts) > 1 else "2026-01-01"
+                        
+                        comp_match = (c_key == "all" or 
+                                      not updates.get("company_key") or 
+                                      updates.get("company_key") == c_key)
+                        date_match = (not updates.get("date_order") or 
+                                      updates.get("date_order") >= d_from)
+                        
+                        if comp_match and date_match:
+                            payload["projects"].append(updates)
+                            
+        db_path = self._db_cache.db_path
+        with self._db_cache._lock:
+            try:
+                import json
+                import sqlite3
+                conn = sqlite3.connect(str(db_path), timeout=30.0)
+                rows = conn.execute("SELECT key, value, created_at FROM cache WHERE key LIKE 'dashboard_payload:%'").fetchall()
+                for key, value_json, created_at in rows:
+                    payload = json.loads(value_json)
+                    updated = False
+                    if "projects" in payload:
+                        for p in payload["projects"]:
+                            if p["project_id"] == project_id:
+                                p.update(updates)
+                                updated = True
+                                break
+                        if not updated and "project_name" in updates:
+                            parts = key.split(":")
+                            if len(parts) == 3:
+                                c_key = parts[1]
+                                d_from = parts[2]
+                                comp_match = (c_key == "all" or 
+                                              not updates.get("company_key") or 
+                                              updates.get("company_key") == c_key)
+                                date_match = (not updates.get("date_order") or 
+                                              updates.get("date_order") >= d_from)
+                                if comp_match and date_match:
+                                    payload["projects"].append(updates)
+                                    updated = True
+                    if updated:
+                        conn.execute(
+                            "INSERT OR REPLACE INTO cache (key, value, created_at) VALUES (?, ?, ?)",
+                            (key, json.dumps(payload), created_at)
+                        )
+                conn.commit()
+                conn.close()
+            except Exception as e:
+                logger.error(f"Failed to update SQLite cache for project {project_id}: {e}")
+
+    def _rebuild_dashboard_aggregates(self, date_from: str, company_key: str) -> dict[str, Any]:
+        """Tái cấu trúc và tính toán lại summary, tag_buckets, tag_gp_ranks từ cache hiện tại."""
+        from datetime import datetime, timezone
+        cache_key = f"{company_key}:{date_from}"
+        with self._cache_lock:
+            cached = self._projects_dashboard_cache.get(cache_key)
+            if not cached:
+                db_cache_key = f"dashboard_payload:{company_key}:{date_from}"
+                db_cached = self._db_cache.get(db_cache_key)
+                if db_cached:
+                    cached = (monotonic(), db_cached)
+                    self._projects_dashboard_cache[cache_key] = cached
+            
+            if cached:
+                payload = cached[1]
+                rows = payload.get("projects", [])
+                
+                filtered_rows = [
+                    row for row in rows
+                    if company_key == "all" or not row.get("company_key") or row.get("company_key") == company_key
+                ]
+                filtered_done_rows = [row for row in filtered_rows if row.get("order_state") == "Done"]
+                done_rows = [row for row in rows if row.get("order_state") == "Done"]
+                
+                summary = self._build_projects_dashboard_summary(filtered_done_rows)
+                tag_buckets = self._build_tag_buckets(done_rows)
+                tag_gp_ranks = self._build_tag_gp_ranks(done_rows)
+                meta = self._build_projects_dashboard_meta(filtered_rows, filtered_done_rows, date_from, company_key)
+                
+                payload["summary"] = summary
+                payload["tag_buckets"] = tag_buckets
+                payload["tag_gp_ranks"] = tag_gp_ranks
+                payload["meta"] = meta
+                payload["fetched_at"] = datetime.now(timezone.utc).isoformat()
+                
+                self._db_cache.set(f"dashboard_payload:{company_key}:{date_from}", payload)
+                
+                return {
+                    "summary": summary,
+                    "tag_buckets": tag_buckets,
+                    "tag_gp_ranks": tag_gp_ranks,
+                    "meta": meta
+                }
+        return {}
+
+    def get_delta_updates(self, last_sync_str: str, company_key: str = "all", date_from: str = "2026-01-01") -> dict[str, Any]:
+        """Lấy các thay đổi gia tăng (delta updates) từ Odoo kể từ mốc last_sync."""
+        from datetime import datetime, timezone, timedelta
+        
+        try:
+            if not last_sync_str:
+                dt_utc = datetime.now(timezone.utc) - timedelta(minutes=1)
+            else:
+                dt = datetime.fromisoformat(last_sync_str.replace("Z", "+00:00"))
+                dt_utc = dt.astimezone(timezone.utc)
+        except Exception as e:
+            logger.warning(f"Failed to parse last_sync '{last_sync_str}': {e}. Using 1 minute ago.")
+            dt_utc = datetime.now(timezone.utc) - timedelta(minutes=1)
+            
+        dt_utc = dt_utc - timedelta(seconds=30)
+        last_sync_utc_str = dt_utc.strftime("%Y-%m-%d %H:%M:%S")
+        
+        logger.info(f"Checking Odoo changes since {last_sync_utc_str} (UTC) for delta update...")
+        
+        try:
+            changed_projects = self.client.call_method(
+                "project.project",
+                "search_read",
+                [[["write_date", ">", last_sync_utc_str]]],
+                {
+                    "fields": ["id", "name", "partner_id", "sale_order_id", "account_id", "company_id", "active", "x_studio_giai_trinh"],
+                    "context": {"active_test": False},
+                }
+            )
+            
+            changed_orders = self.client.search_read(
+                "sale.order",
+                [["write_date", ">", last_sync_utc_str]],
+                ["id", "name", "partner_id", "company_id", "x_sale_order_tag_ids", "x_studio_selection_field_q4_1imrcsjj8"],
+            )
+            
+            project_ids = {p["id"] for p in changed_projects}
+            
+            if changed_orders:
+                so_ids = [order["id"] for order in changed_orders]
+                so_projects = self.client.call_method(
+                    "project.project",
+                    "search_read",
+                    [[["sale_order_id", "in", so_ids]]],
+                    {
+                        "fields": ["id"],
+                        "context": {"active_test": False},
+                    }
+                )
+                for p in so_projects:
+                    project_ids.add(p["id"])
+                    
+            if not project_ids:
+                return {
+                    "ok": True,
+                    "updated_projects": [],
+                    "sync_time": datetime.now(timezone.utc).isoformat()
+                }
+                
+            projects = self.client.call_method(
+                "project.project",
+                "search_read",
+                [[["id", "in", list(project_ids)]]],
+                {
+                    "fields": ["id", "name", "partner_id", "sale_order_id", "account_id", "company_id", "active", "x_studio_giai_trinh"],
+                    "context": {"active_test": False},
+                }
+            )
+            
+            so_ids = [relation_id(p.get("sale_order_id")) for p in projects if relation_id(p.get("sale_order_id"))]
+            sale_orders: list[dict[str, Any]] = []
+            if so_ids:
+                sale_orders = self.client.search_read(
+                    "sale.order",
+                    [["id", "in", so_ids]],
+                    ["id", "name", "partner_id", "company_id", "x_sale_order_tag_ids", "x_studio_selection_field_q4_1imrcsjj8", "amount_untaxed", "user_id"],
+                )
+            
+            sale_orders_by_id = {order["id"]: order for order in sale_orders}
+            tag_map = self._get_sale_order_tag_map(sale_orders)
+            analytic_adjustments = self._build_dashboard_analytic_adjustments(projects, sale_orders_by_id)
+            
+            updated_rows = []
+            for p in projects:
+                try:
+                    row = self._build_projects_dashboard_row(
+                        p,
+                        sale_orders_by_id,
+                        tag_map,
+                        analytic_adjustments,
+                    )
+                    updated_rows.append(row)
+                    self.update_project_in_all_caches(p["id"], row)
+                except Exception as ex:
+                    logger.error(f"Failed to rebuild dashboard row for project {p.get('id')}: {ex}")
+            
+            # Tái cấu trúc aggregates từ cache
+            aggregates = self._rebuild_dashboard_aggregates(date_from, company_key)
+                    
+            res = {
+                "ok": True,
+                "updated_projects": updated_rows,
+                "sync_time": datetime.now(timezone.utc).isoformat()
+            }
+            if aggregates:
+                res.update({
+                    "summary": aggregates.get("summary", {}),
+                    "tag_buckets": aggregates.get("tag_buckets", {}),
+                    "tag_gp_ranks": aggregates.get("tag_gp_ranks", {}),
+                    "meta": aggregates.get("meta", {}),
+                })
+            return res
+        except Exception as e:
+            logger.error(f"Error getting delta updates from Odoo: {e}", exc_info=True)
+            return {
+                "ok": False,
+                "error": str(e),
+                "updated_projects": [],
+                "sync_time": datetime.now(timezone.utc).isoformat()
+            }

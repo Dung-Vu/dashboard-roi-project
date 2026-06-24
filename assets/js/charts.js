@@ -278,3 +278,463 @@ export function renderRevenueDoughnut(tagBuckets) {
         }
     });
 }
+
+export function renderMonthlyTrendChart(projects) {
+    const canvas = document.getElementById('monthlyTrendChart');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    
+    if (state.monthlyTrendChart) {
+        state.monthlyTrendChart.destroy();
+        state.monthlyTrendChart = null;
+    }
+    
+    const doneProjects = (projects || []).filter(p => p.order_state === 'Done' && p.bg_untaxed > 0 && p.date_order);
+    const monthlyData = {};
+    doneProjects.forEach(p => {
+        const date = new Date(p.date_order);
+        if (isNaN(date.getTime())) return;
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const key = `${year}-${month}`;
+        if (!monthlyData[key]) {
+            monthlyData[key] = {
+                label: `Tháng ${month}/${year}`,
+                totalBG: 0,
+                totalGP: 0
+            };
+        }
+        monthlyData[key].totalBG += p.bg_untaxed || 0;
+        monthlyData[key].totalGP += p.gp_amount || 0;
+    });
+    
+    const sortedKeys = Object.keys(monthlyData).sort();
+    const labels = sortedKeys.map(k => monthlyData[k].label);
+    const bgData = sortedKeys.map(k => monthlyData[k].totalBG);
+    const gpPercentData = sortedKeys.map(k => {
+        const d = monthlyData[k];
+        return d.totalBG > 0 ? (d.totalGP / d.totalBG) * 100 : 0;
+    });
+
+    const style = getComputedStyle(document.documentElement);
+    const textColorPrimary = style.getPropertyValue('--color-text-primary').trim() || '#1e293b';
+    const textColorSecondary = style.getPropertyValue('--color-text-secondary').trim() || '#64748b';
+
+    state.monthlyTrendChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [
+                {
+                    label: 'Doanh thu (BG)',
+                    data: bgData,
+                    borderColor: '#2b6cb0',
+                    backgroundColor: 'rgba(43, 108, 176, 0.05)',
+                    borderWidth: 3,
+                    fill: true,
+                    tension: 0.3,
+                    yAxisID: 'y'
+                },
+                {
+                    label: 'Weighted GP%',
+                    data: gpPercentData,
+                    borderColor: '#d97706',
+                    backgroundColor: 'transparent',
+                    borderWidth: 3,
+                    pointBackgroundColor: '#d97706',
+                    tension: 0.3,
+                    yAxisID: 'y1'
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    position: 'top',
+                    labels: {
+                        color: textColorPrimary,
+                        font: { family: "'Outfit', sans-serif", size: 12, weight: '600' }
+                    }
+                },
+                tooltip: {
+                    backgroundColor: 'rgba(12, 35, 23, 0.95)',
+                    titleColor: '#f4f7f5',
+                    bodyColor: '#a7f3d0',
+                    borderColor: '#2b6cb0',
+                    borderWidth: 1,
+                    padding: 10,
+                    callbacks: {
+                        label: function(context) {
+                            const value = context.raw;
+                            if (context.datasetIndex === 0) {
+                                return ` ${context.dataset.label}: ${formatVND(value)}`;
+                            } else {
+                                return ` ${context.dataset.label}: ${value.toFixed(1)}%`;
+                            }
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    ticks: {
+                        color: textColorSecondary,
+                        font: { family: "'Outfit', sans-serif", size: 10, weight: '600' }
+                    },
+                    grid: { color: 'rgba(43, 108, 176, 0.04)' }
+                },
+                y: {
+                    type: 'linear',
+                    display: true,
+                    position: 'left',
+                    ticks: {
+                        color: textColorSecondary,
+                        font: { family: "'Outfit', sans-serif", size: 10, weight: '600' },
+                        callback: function(value) {
+                            return formatVND(value);
+                        }
+                    },
+                    grid: { color: 'rgba(43, 108, 176, 0.04)' },
+                    title: {
+                        display: true,
+                        text: 'Doanh thu',
+                        color: textColorPrimary,
+                        font: { family: "'Outfit', sans-serif", size: 11, weight: '700' }
+                    }
+                },
+                y1: {
+                    type: 'linear',
+                    display: true,
+                    position: 'right',
+                    grid: { drawOnChartArea: false },
+                    ticks: {
+                        color: textColorSecondary,
+                        font: { family: "'Outfit', sans-serif", size: 10, weight: '600' },
+                        callback: function(value) {
+                            return value.toFixed(0) + '%';
+                        }
+                    },
+                    title: {
+                        display: true,
+                        text: 'Weighted GP%',
+                        color: textColorPrimary,
+                        font: { family: "'Outfit', sans-serif", size: 11, weight: '700' }
+                    }
+                }
+            }
+        }
+    });
+}
+
+/**
+ * Renders 4 independent GP% distribution charts for the core tags.
+ */
+export function renderTagGPCharts(tagGPRanks) {
+    const targetTags = ["Nội thất rời", "Giấy dán tường", "Rèm", "Vải nội thất"];
+    const canvasIds = {
+        "Nội thất rời": "gpTagNoiThatRoi",
+        "Giấy dán tường": "gpTagGiayDanTuong",
+        "Rèm": "gpTagRem",
+        "Vải nội thất": "gpTagVaiNoiThat"
+    };
+
+    const style = getComputedStyle(document.documentElement);
+    const textColorPrimary = style.getPropertyValue('--color-text-primary').trim() || '#1e293b';
+    const textColorSecondary = style.getPropertyValue('--color-text-secondary').trim() || '#64748b';
+    const colorMint = style.getPropertyValue('--color-mint').trim() || '#60a5fa';
+    const colorEmerald = style.getPropertyValue('--color-emerald').trim() || '#2b6cb0';
+
+    // Store chart instances on state.tagCharts to manage lifecycle
+    if (!state.tagCharts) {
+        state.tagCharts = {};
+    }
+
+    // Get uniform set of sorted ranges for all GP charts to make them visually comparable
+    const allRanges = new Set();
+    Object.values(tagGPRanks).forEach(ranks => {
+        ranks.forEach(r => allRanges.add(r.range));
+    });
+    const sortedRanges = Array.from(allRanges).sort((a, b) => {
+        const aMatch = a.match(/(-?\d+)/);
+        const bMatch = b.match(/(-?\d+)/);
+        const aNum = aMatch ? parseInt(aMatch[0], 10) : 0;
+        const bNum = bMatch ? parseInt(bMatch[0], 10) : 0;
+        return aNum - bNum;
+    });
+
+    targetTags.forEach(tag => {
+        const canvasId = canvasIds[tag];
+        const canvas = document.getElementById(canvasId);
+        if (!canvas) return;
+
+        // Destroy previous instance to prevent overlays
+        if (state.tagCharts[tag]) {
+            state.tagCharts[tag].destroy();
+        }
+
+        const ctx = canvas.getContext('2d');
+        const ranks = tagGPRanks[tag] || [];
+        const themeColor = TAG_COLORS[tag] || DEFAULT_COLOR;
+
+        const rankMap = {};
+        ranks.forEach(r => { rankMap[r.range] = r.count; });
+        const chartData = sortedRanges.map(range => rankMap[range] || 0);
+
+        let gradientCache = null;
+
+        state.tagCharts[tag] = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: sortedRanges,
+                datasets: [{
+                    label: tag,
+                    data: chartData,
+                    skipNull: true,
+                    categoryPercentage: 0.8,
+                    barPercentage: 0.8,
+                    backgroundColor: function(context) {
+                        const chart = context.chart;
+                        const {ctx: chartCtx, chartArea} = chart;
+                        if (!chartArea) return themeColor.start;
+                        if (gradientCache) return gradientCache;
+                        const gradient = chartCtx.createLinearGradient(0, chartArea.bottom, 0, chartArea.top);
+                        gradient.addColorStop(0, themeColor.end);
+                        gradient.addColorStop(1, themeColor.start);
+                        gradientCache = gradient;
+                        return gradient;
+                    },
+                    borderColor: themeColor.border,
+                    borderWidth: 2,
+                    borderRadius: 4,
+                    borderSkipped: false,
+                    hoverBackgroundColor: themeColor.border
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                onClick: (evt, elements, chart) => {
+                    if (elements && elements.length > 0) {
+                        const activeElement = elements[0];
+                        const index = activeElement.index;
+                        const range = chart.data.labels[index];
+
+                        // Redirect to projects filtering by Tag & GP segment
+                        const tagFilter = document.getElementById('tagFilter');
+                        if (tagFilter) tagFilter.value = tag;
+                        const stateFilter = document.getElementById('stateFilter');
+                        if (stateFilter) stateFilter.value = 'Done';
+
+                        state.pendingUIState.tag = tag;
+                        state.pendingUIState.state = 'Done';
+                        state.pendingUIState.order_state = 'Done';
+                        state.gpRangeFilter = range;
+                        state.revenueTierFilter = null; // Clear tier filter
+
+                        applyFilters();
+                        location.hash = '#/projects';
+                    }
+                },
+                onHover: (event, chartElement) => {
+                    if (event.native && event.native.target) {
+                        event.native.target.style.cursor = chartElement.length ? 'pointer' : 'default';
+                    }
+                },
+                plugins: {
+                    legend: { display: false }, // Tag name is in the card header
+                    tooltip: {
+                        backgroundColor: 'rgba(30, 41, 59, 0.95)',
+                        titleColor: '#f4f7f5',
+                        bodyColor: colorMint,
+                        borderColor: colorEmerald,
+                        borderWidth: 1,
+                        padding: 10,
+                        titleFont: { family: "'Montserrat', sans-serif", weight: '600' },
+                        bodyFont: { family: "'Outfit', sans-serif" },
+                        callbacks: {
+                            label: function(context) {
+                                return ` Số lượng dự án: ${context.raw} DA`;
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        ticks: {
+                            color: textColorSecondary,
+                            font: { family: "'Outfit', sans-serif", size: 10, weight: '600' }
+                        },
+                        grid: { color: 'rgba(43, 108, 176, 0.04)' }
+                    },
+                    y: {
+                        ticks: {
+                            color: textColorSecondary,
+                            font: { family: "'Outfit', sans-serif", size: 10, weight: '600' },
+                            stepSize: 1
+                        },
+                        grid: { color: 'rgba(43, 108, 176, 0.04)' },
+                        beginAtZero: true
+                    }
+                }
+            }
+        });
+    });
+}
+
+/**
+ * Renders the full-width stacked revenue segment chart.
+ */
+export function renderStackedRevenueChart(tagBuckets) {
+    const canvas = document.getElementById('stackedRevenueChart');
+    if (!canvas) return;
+
+    if (state.stackedRevenueChart) {
+        state.stackedRevenueChart.destroy();
+    }
+
+    const ctx = canvas.getContext('2d');
+    const tiers = ['<10tr', '10-100tr', '100-200tr', '>200tr'];
+    const targetTags = ["Nội thất rời", "Giấy dán tường", "Rèm", "Vải nội thất"];
+
+    const style = getComputedStyle(document.documentElement);
+    const textColorPrimary = style.getPropertyValue('--color-text-primary').trim() || '#1e293b';
+    const textColorSecondary = style.getPropertyValue('--color-text-secondary').trim() || '#64748b';
+    const colorMint = style.getPropertyValue('--color-mint').trim() || '#60a5fa';
+    const colorEmerald = style.getPropertyValue('--color-emerald').trim() || '#2b6cb0';
+
+    const datasets = targetTags.map(tag => {
+        const themeColor = TAG_COLORS[tag] || DEFAULT_COLOR;
+        const data = tiers.map(tier => {
+            const bucket = tagBuckets[tag]?.[tier];
+            return bucket ? bucket.bg_untaxed : 0;
+        });
+
+        return {
+            label: tag,
+            data: data,
+            stack: 'revenue',
+            backgroundColor: themeColor.border,
+            borderColor: '#ffffff',
+            borderWidth: 1.5,
+            borderRadius: 4,
+            hoverBackgroundColor: themeColor.border
+        };
+    });
+
+    state.stackedRevenueChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: tiers,
+            datasets: datasets
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            onClick: (evt, elements, chart) => {
+                if (elements && elements.length > 0) {
+                    const activeElement = elements[0];
+                    const datasetIndex = activeElement.datasetIndex;
+                    const index = activeElement.index;
+
+                    const tag = chart.data.datasets[datasetIndex].label;
+                    const tier = chart.data.labels[index];
+
+                    // Redirect to projects filtering by Tag & Revenue segment
+                    const tagFilter = document.getElementById('tagFilter');
+                    if (tagFilter) tagFilter.value = tag;
+                    const stateFilter = document.getElementById('stateFilter');
+                    if (stateFilter) stateFilter.value = 'Done';
+
+                    state.pendingUIState.tag = tag;
+                    state.pendingUIState.state = 'Done';
+                    state.pendingUIState.order_state = 'Done';
+                    state.revenueTierFilter = tier;
+                    state.gpRangeFilter = null; // Clear GP range filter
+
+                    applyFilters();
+                    location.hash = '#/projects';
+                }
+            },
+            onHover: (event, chartElement) => {
+                if (event.native && event.native.target) {
+                    event.native.target.style.cursor = chartElement.length ? 'pointer' : 'default';
+                }
+            },
+            plugins: {
+                legend: {
+                    position: 'top',
+                    labels: {
+                        color: textColorPrimary,
+                        font: { family: "'Outfit', sans-serif", size: 11, weight: '600' },
+                        usePointStyle: true,
+                        pointStyle: 'circle',
+                        padding: 15
+                    }
+                },
+                tooltip: {
+                    mode: 'index',
+                    intersect: false,
+                    backgroundColor: 'rgba(30, 41, 59, 0.95)',
+                    titleColor: '#f4f7f5',
+                    bodyColor: '#ffffff',
+                    borderColor: colorEmerald,
+                    borderWidth: 1,
+                    padding: 10,
+                    titleFont: { family: "'Montserrat', sans-serif", weight: '600' },
+                    bodyFont: { family: "'Outfit', sans-serif" },
+                    callbacks: {
+                        label: function(context) {
+                            const dataset = context.dataset;
+                            const value = context.raw;
+                            
+                            // Calculate percentage contribution inside this segment
+                            const chart = context.chart;
+                            const dataIndex = context.dataIndex;
+                            let total = 0;
+                            chart.data.datasets.forEach(ds => {
+                                total += ds.data[dataIndex] || 0;
+                            });
+                            const pct = total > 0 ? ((value / total) * 100).toFixed(1) : 0;
+                            return ` ${dataset.label}: ${formatVND(value)} (${pct}%)`;
+                        },
+                        footer: function(tooltipItems) {
+                            let total = 0;
+                            if (tooltipItems.length > 0) {
+                                const chart = tooltipItems[0].chart;
+                                const dataIndex = tooltipItems[0].dataIndex;
+                                chart.data.datasets.forEach(ds => {
+                                    total += ds.data[dataIndex] || 0;
+                                });
+                            }
+                            return `Tổng doanh thu phân khúc: ${formatVND(total)}`;
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    stacked: true,
+                    ticks: {
+                        color: textColorSecondary,
+                        font: { family: "'Outfit', sans-serif", size: 11, weight: '600' }
+                    },
+                    grid: { color: 'rgba(43, 108, 176, 0.04)' }
+                },
+                y: {
+                    stacked: true,
+                    ticks: {
+                        color: textColorSecondary,
+                        font: { family: "'Outfit', sans-serif", size: 10, weight: '600' },
+                        callback: function(value) {
+                            return formatVND(value);
+                        }
+                    },
+                    grid: { color: 'rgba(43, 108, 176, 0.04)' }
+                }
+            }
+        }
+    });
+}
+

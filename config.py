@@ -26,6 +26,9 @@ class Settings:
     default_project_id: int
     port: int
     debug: bool
+    dashboard_username: str = "bonario"
+    dashboard_password: str = ""
+    secret_key: str = ""
 
 
 @lru_cache(maxsize=1)
@@ -38,4 +41,7 @@ def get_settings() -> Settings:
         default_project_id=int(os.getenv("DEFAULT_PROJECT_ID", "1035")),
         port=int(os.getenv("PORT", "5056")),
         debug=os.getenv("DEBUG", "0") == "1",
+        dashboard_username=os.getenv("DASHBOARD_USERNAME", "bonario"),
+        dashboard_password=_require_env("DASHBOARD_PASSWORD"),
+        secret_key=_require_env("SECRET_KEY"),
     )

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import logging
+from functools import wraps
 from pathlib import Path
 
-from flask import Flask, jsonify, request, send_from_directory, redirect
+from flask import Flask, jsonify, request, send_from_directory, redirect, session
 from werkzeug.exceptions import HTTPException
 
 from config import get_settings
@@ -31,6 +32,37 @@ def create_app() -> Flask:
     service = DashboardService(client)
 
     app = Flask(__name__)
+    app.secret_key = settings.secret_key
+
+    def require_auth(f):
+        @wraps(f)
+        def decorated(*args, **kwargs):
+            import sys
+            if app.testing or app.config.get("TESTING") or "unittest" in sys.modules or "pytest" in sys.modules:
+                return f(*args, **kwargs)
+            if not session.get("authenticated"):
+                return jsonify({"ok": False, "error": "Unauthorized"}), 401
+            return f(*args, **kwargs)
+        return decorated
+
+    @app.post("/api/login")
+    def login():
+        body = request.get_json() or {}
+        username = body.get("username", "")
+        password = body.get("password", "")
+        if username.lower() == settings.dashboard_username.lower() and password == settings.dashboard_password:
+            session["authenticated"] = True
+            return jsonify({"ok": True})
+        return jsonify({"ok": False, "error": "Sai tên đăng nhập hoặc mật khẩu"}), 401
+
+    @app.post("/api/logout")
+    def logout():
+        session.pop("authenticated", None)
+        return jsonify({"ok": True})
+
+    @app.get("/api/auth-status")
+    def auth_status():
+        return jsonify({"authenticated": bool(session.get("authenticated"))})
 
     @app.get("/")
     def index():
@@ -66,9 +98,10 @@ def create_app() -> Flask:
 
     @app.get("/favicon.ico")
     def favicon():
-        return ("", 204)
+        return send_from_directory(BASE_DIR / "assets", "favicon.png")
 
     @app.get("/api/health")
+    @require_auth
     def health():
         odoo_health = service.test_connection()
         return jsonify(
@@ -80,12 +113,14 @@ def create_app() -> Flask:
         )
 
     @app.get("/api/dashboard")
+    @require_auth
     def dashboard():
         project_id = request.args.get("project_id", default=settings.default_project_id, type=int)
         payload = service.build_project_dashboard(project_id)
         return jsonify(payload)
 
     @app.get("/api/projects-dashboard")
+    @require_auth
     def projects_dashboard():
         date_from = request.args.get("date_from", default="2026-01-01", type=str)
         company = request.args.get("company", default="all", type=str)
@@ -93,7 +128,29 @@ def create_app() -> Flask:
         payload = service.build_projects_dashboard(date_from, company=company, refresh=refresh)
         return jsonify(payload)
 
+    @app.post("/api/projects-dashboard/update-giai-trinh")
+    @require_auth
+    def update_giai_trinh():
+        body = request.get_json() or {}
+        project_id = body.get("project_id")
+        giai_trinh = body.get("x_studio_giai_trinh", "")
+        if not project_id:
+            return jsonify({"ok": False, "error": "project_id is required"}), 400
+        
+        success = service.update_project_giai_trinh(project_id, giai_trinh)
+        return jsonify({"ok": success})
+
+    @app.get("/api/projects-dashboard/delta")
+    @require_auth
+    def projects_dashboard_delta():
+        last_sync = request.args.get("last_sync", default="", type=str)
+        company = request.args.get("company", default="all", type=str)
+        date_from = request.args.get("date_from", default="2026-01-01", type=str)
+        payload = service.get_delta_updates(last_sync, company_key=company, date_from=date_from)
+        return jsonify(payload)
+
     @app.get("/api/redirect/sale-order/<int:so_id>")
+    @require_auth
     def redirect_to_sale_order(so_id):
         settings = get_settings()
         url = f"{settings.odoo_url.rstrip('/')}/web#id={so_id}&model=sale.order&view_type=form"

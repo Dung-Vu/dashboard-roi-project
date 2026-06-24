@@ -14,7 +14,14 @@ services:
       - dashboard_cache:/app/data
     ports:
       - "${PORT:-5056}:${PORT:-5056}"
+    networks:
+      - shared-tunnel
     restart: unless-stopped
 
 volumes:
   dashboard_cache:
+
+networks:
+  shared-tunnel:
+    name: bonario-shared-tunnel
+    external: true

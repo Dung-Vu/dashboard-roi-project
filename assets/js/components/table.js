@@ -9,6 +9,33 @@ export function getSortValue(project, columnKey) {
     return String(val).toLowerCase();
 }
 
+const _COST_LABEL_MAP = {
+    'purchase_order': 'Đơn mua hàng',
+    'manufacturing_order': 'Lệnh sản xuất',
+    'cost_of_goods_sold': 'Giá vốn hàng bán',
+    'employee': 'Nhân công',
+    'timesheet': 'Bảng chấm công',
+    'timesheets': 'Bảng chấm công',
+    'expense': 'Chi phí',
+    'expenses': 'Chi phí',
+    'vendor_bill': 'Hóa đơn nhà cung cấp',
+    'vendor_bills': 'Hóa đơn nhà cung cấp',
+    'subcontracting': 'Gia công phụ',
+    'other': 'Chi phí khác',
+    'billable_fixed': 'Dịch vụ cố định',
+    'billable_time': 'Dịch vụ theo giờ',
+    'billable_milestones': 'Dịch vụ theo mốc',
+    'non_billable': 'Không tính phí',
+    'downpayment': 'Tạm ứng',
+    'stock_move': 'Xuất kho',
+};
+
+function _translateCostLabel(rawLabel) {
+    if (!rawLabel) return 'Khác';
+    const key = rawLabel.toLowerCase().replace(/\s+/g, '_');
+    return _COST_LABEL_MAP[key] || _COST_LABEL_MAP[rawLabel] || rawLabel;
+}
+
 export function applySorting(projects) {
     if (!state.sortColumn) return projects;
     const sorted = [...projects];
@@ -50,10 +77,9 @@ export function updateSortIndicators() {
 export function exportCSV() {
     if (!state.filteredProjects || state.filteredProjects.length === 0) return;
 
-    const headers = ['Đơn hàng', 'Dự án', 'Khách hàng', 'Tags', 'Trạng thái', 'Doanh thu', 'Chi phí', 'Chi phí gốc', 'GP', 'GP%'];
+    const headers = ['Đơn hàng', 'Khách hàng', 'Tags', 'Trạng thái', 'Doanh thu', 'Chi phí', 'Chi phí gốc', 'GP', 'GP%', 'Giải trình'];
     const rows = applySorting(state.filteredProjects).map(p => [
         p.sale_order_name || '',
-        p.project_name || '',
         p.customer || '',
         (p.tags || []).join('; '),
         STATE_LABELS[p.order_state] || p.order_state || '',
@@ -62,6 +88,7 @@ export function exportCSV() {
         p.native_expected_cost,
         p.gp_amount,
         p.gp_percent !== null && p.gp_percent !== undefined ? p.gp_percent.toFixed(1) + '%' : '',
+        p.x_studio_giai_trinh || '',
     ]);
 
     const csvContent = [headers, ...rows]
@@ -105,7 +132,7 @@ export function updateFilterIndicators() {
     const stateVal = stateFilter ? stateFilter.value : '';
     const healthVal = healthFilter ? healthFilter.value : '';
 
-    const hasActiveFilters = searchTerm || tagVal || stateVal || healthVal || state.gpRangeFilter;
+    const hasActiveFilters = searchTerm || tagVal || stateVal || healthVal || state.gpRangeFilter || state.revenueTierFilter;
 
     let clearBtn = document.getElementById('clearFiltersBtn');
     if (!clearBtn) {
@@ -119,8 +146,12 @@ export function updateFilterIndicators() {
         }
     }
     
-    if (state.gpRangeFilter) {
+    if (state.gpRangeFilter && state.revenueTierFilter) {
+        clearBtn.innerHTML = `✕ Xóa bộ lọc (${state.gpRangeFilter} & Phân khúc ${state.revenueTierFilter})`;
+    } else if (state.gpRangeFilter) {
         clearBtn.innerHTML = `✕ Xóa bộ lọc (${state.gpRangeFilter})`;
+    } else if (state.revenueTierFilter) {
+        clearBtn.innerHTML = `✕ Xóa bộ lọc (Phân khúc ${state.revenueTierFilter})`;
     } else {
         clearBtn.textContent = '✕ Xóa bộ lọc';
     }
@@ -140,6 +171,7 @@ export function clearFilters() {
     if (healthFilter) healthFilter.value = '';
 
     state.gpRangeFilter = null;
+    state.revenueTierFilter = null;
 
     applyFilters();
 }
@@ -183,6 +215,7 @@ export function renderProjectsTable(projects) {
                           p.order_state === 'In progress' ? 'progress' : 'pending';
         const stateLabel = STATE_LABELS[p.order_state] || escapeHTML(p.order_state) || '-';
         const adjustedCost = p.adjusted_expected_cost ?? p.native_expected_cost;
+        const hasBreakdown = (p.cost_breakdown || []).length > 0;
 
         let healthBadgeHTML = '';
         if (p.gp_percent === null || p.gp_percent === undefined || Number.isNaN(Number(p.gp_percent))) {
@@ -221,20 +254,76 @@ export function renderProjectsTable(projects) {
         tr.style.animationDelay = `${indexOnPage * 0.025}s`;
 
         const isSelected = state.selectedProjects.has(p.project_id);
+        const expandIcon = hasBreakdown
+            ? `<button class="cost-expand-btn" data-project-id="${p.project_id}" style="background:none;border:none;cursor:pointer;color:var(--color-emerald);padding:2px 6px;border-radius:4px;transition:all 0.2s;display:inline-flex;align-items:center;font-size:0.75rem;" title="Xem chi tiết chi phí"><i class="fas fa-chevron-right" style="font-size:0.6rem;transition:transform 0.2s;"></i></button>`
+            : '';
         tr.innerHTML = `
             <td style="text-align: center;"><input type="checkbox" class="project-checkbox" data-project-id="${p.project_id}" ${isSelected ? 'checked' : ''}></td>
             <td>${saleOrderHTML}</td>
-            <td><span style="font-weight: 600; color: var(--color-text-primary);">${escapeHTML(p.project_name) || '-'}</span></td>
-            <td style="color: var(--color-text-secondary); font-weight: 500;">${escapeHTML(p.customer) || '-'}</td>
+            <td style="color: var(--color-text-secondary); font-weight: 500; max-width: 280px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${escapeHTML(p.customer) || '-'}">${escapeHTML(p.customer) || '-'}</td>
             <td><div style="display: flex; flex-wrap: wrap; gap: 0.25rem;">${(p.tags || []).map(t => `<span class="tag-badge">${escapeHTML(t)}</span>`).join('')}</div></td>
             <td><span class="state-badge ${stateClass}">${stateLabel}</span></td>
             <td class="text-right" style="font-family: var(--font-heading); font-weight: 700; color: var(--color-text-primary);">${formatFullVND(p.bg_untaxed)}</td>
-            <td class="text-right" style="font-family: var(--font-heading); font-weight: 600; color: var(--color-text-secondary);">${formatFullVND(adjustedCost)}</td>
+            <td class="text-right" style="font-family: var(--font-heading); font-weight: 600; color: var(--color-text-secondary);">
+                <div style="display:flex;align-items:center;justify-content:flex-end;gap:4px;">
+                    ${expandIcon}
+                    <span>${formatFullVND(adjustedCost)}</span>
+                </div>
+            </td>
             <td class="text-right ${gpClass}" style="font-family: var(--font-heading); font-weight: 700;">${formatFullVND(p.gp_amount)}</td>
             <td class="text-right" style="font-family: var(--font-heading); font-size: 0.825rem; vertical-align: middle;">${healthBadgeHTML}</td>
+            <td class="giai-trinh-cell" data-project-id="${p.project_id}" style="position: relative; padding-right: 36px;" title="${escapeHTML(p.x_studio_giai_trinh) || '-'}">
+                <span class="giai-trinh-text" style="font-weight: 500; font-size: 0.85rem; line-height: 1.4; max-width: 75px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; color: var(--color-text-primary);">${escapeHTML(p.x_studio_giai_trinh) || '-'}</span>
+                <button class="btn-giai-trinh-edit" style="position: absolute; right: 8px; top: 50%; transform: translateY(-50%); background: none; border: none; color: var(--color-emerald); cursor: pointer; padding: 4px; display: flex; align-items: center; justify-content: center; border-radius: 4px; transition: all 0.2s;" title="Chỉnh sửa giải trình" onmouseover="this.style.background='rgba(16, 120, 80, 0.1)'" onmouseout="this.style.background='none'">
+                    <i class="fas fa-pencil-alt" style="font-size: 0.85rem;"></i>
+                </button>
+            </td>
         `;
         if (isSelected) tr.classList.add('selected-row');
         fragment.appendChild(tr);
+
+        // Cost breakdown detail row (hidden by default)
+        if (hasBreakdown) {
+            const detailTr = document.createElement('tr');
+            detailTr.className = 'cost-breakdown-row';
+            detailTr.dataset.breakdownFor = p.project_id;
+            detailTr.style.display = 'none';
+            const nativeCost = p.native_expected_cost ?? 0;
+            let bHTML = `<td colspan="10" style="padding: 0 1rem 1rem 3.5rem; background: rgba(16, 120, 80, 0.03); border-left: 3px solid var(--color-emerald);">
+                <div style="padding: 0.75rem 0 0.25rem 0;">
+                    <div style="font-size: 0.78rem; font-weight: 700; color: var(--color-emerald); margin-bottom: 0.5rem; font-family: var(--font-heading); display:flex; align-items:center; gap:6px;">
+                        <i class="fas fa-layer-group" style="font-size:0.7rem;"></i>
+                        Cấu thành chi phí — ${escapeHTML(p.sale_order_name)}
+                    </div>
+                    <table style="width: 100%; border-collapse: collapse; font-size: 0.82rem;">
+                        <thead><tr style="border-bottom: 1px solid rgba(16, 120, 80, 0.15);">
+                            <th style="text-align:left;padding:6px 8px;font-weight:600;color:var(--color-text-secondary);font-size:0.75rem;text-transform:uppercase;letter-spacing:0.5px;">Loại chi phí</th>
+                            <th style="text-align:right;padding:6px 8px;font-weight:600;color:var(--color-text-secondary);font-size:0.75rem;text-transform:uppercase;letter-spacing:0.5px;">Đã thanh toán</th>
+                            <th style="text-align:right;padding:6px 8px;font-weight:600;color:var(--color-text-secondary);font-size:0.75rem;text-transform:uppercase;letter-spacing:0.5px;">Chờ thanh toán</th>
+                            <th style="text-align:right;padding:6px 8px;font-weight:600;color:var(--color-text-secondary);font-size:0.75rem;text-transform:uppercase;letter-spacing:0.5px;">Tổng chi phí</th>
+                        </tr></thead><tbody>`;
+            let tBilled = 0, tCommit = 0, tExpected = 0;
+            p.cost_breakdown.forEach(item => {
+                const b = item.billed ?? 0, c = item.open_commitment ?? 0, e = item.expected ?? 0;
+                tBilled += b; tCommit += c; tExpected += e;
+                const pct = nativeCost > 0 ? ((e / nativeCost) * 100).toFixed(1) : '0';
+                const label = _translateCostLabel(item.label);
+                bHTML += `<tr style="border-bottom:1px solid rgba(16,120,80,0.08);">
+                    <td style="padding:5px 8px;color:var(--color-text-primary);font-weight:500;"><div style="display:flex;align-items:center;gap:6px;"><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:var(--color-emerald);opacity:0.6;"></span>${escapeHTML(label)}<span style="font-size:0.7rem;color:var(--color-text-secondary);font-weight:400;">(${pct}%)</span></div></td>
+                    <td style="text-align:right;padding:5px 8px;font-family:var(--font-heading);color:var(--color-text-secondary);">${formatFullVND(b)}</td>
+                    <td style="text-align:right;padding:5px 8px;font-family:var(--font-heading);color:${c > 0 ? '#d97706' : 'var(--color-text-secondary)'};">${formatFullVND(c)}</td>
+                    <td style="text-align:right;padding:5px 8px;font-family:var(--font-heading);font-weight:600;color:var(--color-text-primary);">${formatFullVND(e)}</td>
+                </tr>`;
+            });
+            bHTML += `<tr style="border-top:2px solid rgba(16,120,80,0.2);font-weight:700;">
+                <td style="padding:6px 8px;color:var(--color-emerald);font-family:var(--font-heading);"><i class="fas fa-equals" style="font-size:0.65rem;margin-right:4px;"></i> TỔNG CHI PHÍ GỐC</td>
+                <td style="text-align:right;padding:6px 8px;font-family:var(--font-heading);color:var(--color-text-primary);">${formatFullVND(tBilled)}</td>
+                <td style="text-align:right;padding:6px 8px;font-family:var(--font-heading);color:${tCommit > 0 ? '#d97706' : 'var(--color-text-primary)'};">${formatFullVND(tCommit)}</td>
+                <td style="text-align:right;padding:6px 8px;font-family:var(--font-heading);color:var(--color-emerald);font-size:0.95rem;">${formatFullVND(tExpected)}</td>
+            </tr></tbody></table></div></td>`;
+            detailTr.innerHTML = bHTML;
+            fragment.appendChild(detailTr);
+        }
     });
 
     tbody.appendChild(fragment);
@@ -417,7 +506,7 @@ export function applyFilters() {
         if (searchTerm) {
             const searchFields = [
                 p.sale_order_name,
-                p.project_name,
+                p.x_studio_giai_trinh,
                 p.customer,
             ].filter(Boolean).join(' ').toLowerCase();
             if (!searchFields.includes(searchTerm)) return false;
@@ -429,6 +518,17 @@ export function applyFilters() {
 
         if (state.gpRangeFilter) {
             if (!isGPInInterval(p.gp_percent, state.gpRangeFilter)) return false;
+        }
+
+        if (state.revenueTierFilter) {
+            const amount = p.bg_untaxed || 0;
+            let projectTier = '';
+            if (amount < 10000000) projectTier = '<10tr';
+            else if (amount < 100000000) projectTier = '10-100tr';
+            else if (amount < 200000000) projectTier = '100-200tr';
+            else projectTier = '>200tr';
+
+            if (projectTier !== state.revenueTierFilter) return false;
         }
 
         return true;

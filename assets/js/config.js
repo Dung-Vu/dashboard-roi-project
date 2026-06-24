@@ -27,10 +27,10 @@ export const STATE_LABELS = {
 
 export const SORTABLE_COLUMNS = [
     { key: 'sale_order_name', label: 'Đơn hàng' },
-    { key: 'project_name', label: 'Dự án' },
     { key: 'customer', label: 'Khách hàng' },
     { key: 'bg_untaxed', label: 'Doanh thu' },
     { key: 'adjusted_expected_cost', label: 'Chi phí' },
     { key: 'gp_amount', label: 'GP' },
     { key: 'gp_percent', label: 'GP%' },
+    { key: 'x_studio_giai_trinh', label: 'Giải trình' },
 ];

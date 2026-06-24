@@ -1,8 +1,8 @@
 import { state, applySavedUIState, saveUIState } from './assets/js/state.js';
-import { debounce } from './assets/js/utils.js';
+import { debounce, showToast, escapeHTML } from './assets/js/utils.js';
 import { fetchDashboard } from './assets/js/api.js';
-import { renderKPISparklines, renderGPChart, renderRevenueDoughnut } from './assets/js/charts.js';
-import { renderKPIs, getDashboardMeta, renderScopeBar } from './assets/js/components/dashboard-kpi.js';
+import { renderKPISparklines, renderGPChart, renderRevenueDoughnut, renderMonthlyTrendChart } from './assets/js/charts.js';
+import { renderKPIs } from './assets/js/components/dashboard-kpi.js';
 import { renderOperationalPanels, renderTagAnalysis, renderTagLeaderboard } from './assets/js/components/ops-panels.js';
 import {
     renderProjectsTable,
@@ -13,6 +13,7 @@ import {
     updateSelectAllState,
     applySorting
 } from './assets/js/components/table.js';
+
 import { DEFAULT_COMPANY, DEFAULT_DATE_FROM, ITEMS_PER_PAGE } from './assets/js/config.js';
 
 // ===== SPA Router =====
@@ -56,6 +57,25 @@ function handleRouting() {
         }
     }
 
+    if (hash !== '#/tags') {
+        if (state.stackedRevenueChart) {
+            state.stackedRevenueChart.destroy();
+            state.stackedRevenueChart = null;
+        }
+        if (state.tagCharts) {
+            Object.keys(state.tagCharts).forEach(tag => {
+                if (state.tagCharts[tag]) {
+                    state.tagCharts[tag].destroy();
+                }
+            });
+            state.tagCharts = null;
+        }
+    }
+
+    if (hash === '#/tags' && state.dashboardData) {
+        renderTagAnalysis(state.dashboardData.tag_buckets, state.dashboardData.tag_gp_ranks);
+    }
+
     if (hash === '#/ranks' && state.dashboardData) {
         if (!state.gpChart) {
             renderGPChart(state.dashboardData.tag_gp_ranks);
@@ -66,6 +86,11 @@ function handleRouting() {
             renderRevenueDoughnut(state.dashboardData.tag_buckets);
         } else {
             state.revenueDoughnutChart.resize();
+        }
+        if (!state.monthlyTrendChart) {
+            renderMonthlyTrendChart(state.dashboardData.projects);
+        } else {
+            state.monthlyTrendChart.resize();
         }
         renderTagLeaderboard(state.dashboardData.tag_buckets);
     }
@@ -145,6 +170,22 @@ async function loadDashboard(refresh = false) {
             state.revenueDoughnutChart.destroy();
             state.revenueDoughnutChart = null;
         }
+        if (state.monthlyTrendChart) {
+            state.monthlyTrendChart.destroy();
+            state.monthlyTrendChart = null;
+        }
+        if (state.stackedRevenueChart) {
+            state.stackedRevenueChart.destroy();
+            state.stackedRevenueChart = null;
+        }
+        if (state.tagCharts) {
+            Object.keys(state.tagCharts).forEach(tag => {
+                if (state.tagCharts[tag]) {
+                    state.tagCharts[tag].destroy();
+                }
+            });
+            state.tagCharts = null;
+        }
 
         renderKPIs(state.dashboardData.summary);
         renderKPISparklines(state.dashboardData.projects);
@@ -152,7 +193,9 @@ async function loadDashboard(refresh = false) {
         renderTagAnalysis(state.dashboardData.tag_buckets, state.dashboardData.tag_gp_ranks);
         populateFilters(state.dashboardData.projects);
 
+
         applyFilters();
+
 
         const lastUpdatedEl = document.getElementById('lastUpdated');
         if (lastUpdatedEl && state.dashboardData.fetched_at) {
@@ -160,6 +203,7 @@ async function loadDashboard(refresh = false) {
             lastUpdatedEl.textContent = date.toLocaleString('vi-VN');
         }
         saveUIState();
+        state.lastSyncTime = state.dashboardData.fetched_at;
 
         if (loadingEl) loadingEl.style.display = 'none';
         if (mainEl) mainEl.style.display = 'block';
@@ -172,6 +216,10 @@ async function loadDashboard(refresh = false) {
         console.error('Load error:', err);
         const overlay = document.getElementById('refreshOverlay');
         if (overlay) overlay.style.display = 'none';
+        if (err.message && err.message.includes('HTTP 401')) {
+            showLogin();
+            return;
+        }
         if (!state.dashboardData) {
             if (loadingEl) loadingEl.style.display = 'none';
             if (errorEl) errorEl.style.display = 'flex';
@@ -185,10 +233,188 @@ async function loadDashboard(refresh = false) {
     }
 }
 
-// ===== Event Listeners =====
-document.addEventListener('DOMContentLoaded', () => {
-    applySavedUIState();
+let syncFailures = 0;
+let incrementalSyncTimer = null;
+let lastUserActivityTime = Date.now();
+let currentSyncInterval = 10000;
+const INACTIVE_TIMEOUT = 180000;
+const ACTIVE_INTERVAL = 10000;
+const IDLE_INTERVAL = 60000;
+
+async function runIncrementalSync() {
+    if (!state.dashboardData || !state.lastSyncTime || state.isLoadingState) return;
+
+    try {
+        const lastSync = state.lastSyncTime;
+        const company = state.company || DEFAULT_COMPANY;
+        const dateFrom = document.getElementById('dateFrom')?.value || DEFAULT_DATE_FROM;
+
+        const res = await fetch(`/api/projects-dashboard/delta?last_sync=${encodeURIComponent(lastSync)}&company=${encodeURIComponent(company)}&date_from=${encodeURIComponent(dateFrom)}`);
+        if (res.status === 401) {
+            console.warn("Session expired. Redirecting to login.");
+            showLogin();
+            return;
+        }
+        const data = await res.json();
+
+        // Reset failures and hide warning on success
+        syncFailures = 0;
+        const indicator = document.getElementById('syncStatusIndicator');
+        if (indicator) indicator.style.display = 'none';
+
+        if (data.ok && data.updated_projects && data.updated_projects.length > 0) {
+
+            
+            let hasChanges = false;
+            data.updated_projects.forEach(updatedProj => {
+                const idx = state.dashboardData.projects.findIndex(p => p.project_id === updatedProj.project_id);
+                if (idx !== -1) {
+                    const existing = state.dashboardData.projects[idx];
+                    if (
+                        existing.x_studio_giai_trinh !== updatedProj.x_studio_giai_trinh ||
+                        existing.order_state !== updatedProj.order_state ||
+                        JSON.stringify(existing.tags) !== JSON.stringify(updatedProj.tags) ||
+                        existing.bg_untaxed !== updatedProj.bg_untaxed ||
+                        existing.adjusted_expected_cost !== updatedProj.adjusted_expected_cost
+                    ) {
+                        state.dashboardData.projects[idx] = updatedProj;
+                        hasChanges = true;
+                    }
+                } else {
+                    state.dashboardData.projects.push(updatedProj);
+                    hasChanges = true;
+                }
+            });
+
+            if (hasChanges) {
+                if (data.summary && Object.keys(data.summary).length > 0) state.dashboardData.summary = data.summary;
+                if (data.tag_buckets && Object.keys(data.tag_buckets).length > 0) state.dashboardData.tag_buckets = data.tag_buckets;
+                if (data.tag_gp_ranks && Object.keys(data.tag_gp_ranks).length > 0) state.dashboardData.tag_gp_ranks = data.tag_gp_ranks;
+                if (data.meta && Object.keys(data.meta).length > 0) state.dashboardData.meta = data.meta;
+
+                renderKPIs(state.dashboardData.summary);
+                renderKPISparklines(state.dashboardData.projects);
+                renderOperationalPanels();
+                renderTagAnalysis(state.dashboardData.tag_buckets, state.dashboardData.tag_gp_ranks);
+
+                const hash = location.hash || '#/overview';
+                if (hash === '#/ranks') {
+                    if (state.gpChart) state.gpChart.destroy();
+                    if (state.revenueDoughnutChart) state.revenueDoughnutChart.destroy();
+                    if (state.monthlyTrendChart) state.monthlyTrendChart.destroy();
+                    
+                    renderGPChart(state.dashboardData.tag_gp_ranks);
+                    renderRevenueDoughnut(state.dashboardData.tag_buckets);
+                    renderMonthlyTrendChart(state.dashboardData.projects);
+                    renderTagLeaderboard(state.dashboardData.tag_buckets);
+                } else if (hash === '#/tags') {
+                    if (state.stackedRevenueChart) {
+                        state.stackedRevenueChart.destroy();
+                        state.stackedRevenueChart = null;
+                    }
+                    if (state.tagCharts) {
+                        Object.keys(state.tagCharts).forEach(tag => {
+                            if (state.tagCharts[tag]) {
+                                state.tagCharts[tag].destroy();
+                            }
+                        });
+                        state.tagCharts = null;
+                    }
+                    renderTagAnalysis(state.dashboardData.tag_buckets, state.dashboardData.tag_gp_ranks);
+                }
+
+                applyFilters();
+
+
+                showToast(`Đã đồng bộ thời gian thực ${data.updated_projects.length} dự án thay đổi từ Odoo`);
+            }
+        }
+
+        if (data.sync_time) {
+            state.lastSyncTime = data.sync_time;
+        }
+    } catch (err) {
+        syncFailures++;
+        console.error(`Failed to run incremental sync (attempt ${syncFailures}):`, err);
+        if (syncFailures >= 3) {
+            const indicator = document.getElementById('syncStatusIndicator');
+            if (indicator) indicator.style.display = 'inline-flex';
+        }
+    }
+}
+
+function scheduleNextSync() {
+    if (incrementalSyncTimer) {
+        clearTimeout(incrementalSyncTimer);
+    }
+
+    const timeSinceLastActivity = Date.now() - lastUserActivityTime;
+    const isTabHidden = document.hidden;
+    const isIdle = timeSinceLastActivity > INACTIVE_TIMEOUT || isTabHidden;
+
+    currentSyncInterval = isIdle ? IDLE_INTERVAL : ACTIVE_INTERVAL;
+
+    incrementalSyncTimer = setTimeout(async () => {
+        await runIncrementalSync();
+        scheduleNextSync();
+    }, currentSyncInterval);
+}
+
+function recordUserActivity() {
+    const wasIdle = currentSyncInterval === IDLE_INTERVAL;
+    lastUserActivityTime = Date.now();
+    if (wasIdle) {
+
+        scheduleNextSync();
+    }
+}
+
+function startIncrementalSync() {
+    ['mousemove', 'keydown', 'click', 'scroll'].forEach(evt => {
+        document.removeEventListener(evt, recordUserActivity);
+        document.addEventListener(evt, recordUserActivity, { passive: true });
+    });
+
+    document.removeEventListener('visibilitychange', scheduleNextSync);
+    document.addEventListener('visibilitychange', scheduleNextSync);
+
+    scheduleNextSync();
+}
+
+function showLogin() {
+    const loginContainer = document.getElementById('loginContainer');
+    const appLayout = document.querySelector('.app-layout');
+    if (loginContainer) loginContainer.style.display = 'flex';
+    if (appLayout) appLayout.style.display = 'none';
+}
+
+function initApp() {
+    const loginContainer = document.getElementById('loginContainer');
+    const appLayout = document.querySelector('.app-layout');
+    if (loginContainer) loginContainer.style.display = 'none';
+    if (appLayout) appLayout.style.display = 'flex';
     loadDashboard();
+    startIncrementalSync();
+}
+
+// ===== Event Listeners =====
+document.addEventListener('DOMContentLoaded', async () => {
+    applySavedUIState();
+
+    
+    // Check authentication status first
+    try {
+        const res = await fetch('/api/auth-status');
+        const data = await res.json();
+        if (data.authenticated) {
+            initApp();
+        } else {
+            showLogin();
+        }
+    } catch (err) {
+        console.error('Lỗi khi kiểm tra xác thực:', err);
+        showLogin();
+    }
 
     addEventListener('hashchange', handleRouting);
     addEventListener('resize', updateMenuIndicator);
@@ -328,5 +554,182 @@ document.addEventListener('DOMContentLoaded', () => {
         const selectAll = document.getElementById('selectAll');
         if (selectAll) selectAll.checked = false;
         updateMultiSelectPanel();
+    });
+
+    // Inline Edit helper for Explanation (x_studio_giai_trinh) in projectsTable
+    function triggerInlineEdit(cell) {
+        if (!cell || cell.querySelector('.inline-edit-container')) return;
+
+        const projectId = parseInt(cell.dataset.projectId);
+        const project = (state.dashboardData?.projects || []).find(p => p.project_id === projectId);
+        const currentVal = project ? (project.x_studio_giai_trinh || '') : '';
+
+        const originalHTML = `
+            <span class="giai-trinh-text" style="font-weight: 500; font-size: 0.85rem; line-height: 1.4; max-width: 75px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; color: var(--color-text-primary);">${escapeHTML(currentVal) || '-'}</span>
+            <button class="btn-giai-trinh-edit" style="position: absolute; right: 8px; top: 50%; transform: translateY(-50%); background: none; border: none; color: var(--color-emerald); cursor: pointer; padding: 4px; display: flex; align-items: center; justify-content: center; border-radius: 4px; transition: all 0.2s;" title="Chỉnh sửa giải trình" onmouseover="this.style.background='rgba(16, 120, 80, 0.1)'" onmouseout="this.style.background='none'">
+                <i class="fas fa-pencil-alt" style="font-size: 0.85rem;"></i>
+            </button>
+        `;
+
+        cell.title = currentVal || '-';
+        cell.innerHTML = `
+            <div class="inline-edit-container" style="display: flex; flex-direction: column; gap: 0.5rem; width: 100%; min-width: 220px;" onclick="evt => evt.stopPropagation();">
+                <textarea class="inline-edit-input" style="width: 100%; min-height: 80px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--color-emerald); font-size: 0.85rem; background: rgba(255, 255, 255, 0.95); color: #1e293b; font-family: inherit; resize: vertical; line-height: 1.4;" placeholder="Nhập giải trình...">${currentVal}</textarea>
+                <div class="inline-edit-actions" style="display: flex; gap: 0.5rem; justify-content: flex-end;">
+                    <button class="btn-edit-cancel" style="padding: 4px 10px; font-size: 0.75rem; border-radius: 4px; background: #e2e8f0; color: #475569; border: none; cursor: pointer; font-weight: 500;">Hủy</button>
+                    <button class="btn-edit-save" style="padding: 4px 10px; font-size: 0.75rem; border-radius: 4px; background: var(--color-emerald); color: white; border: none; cursor: pointer; font-weight: 500; display: flex; align-items: center; gap: 0.25rem;">Lưu</button>
+                </div>
+            </div>
+        `;
+
+        const textarea = cell.querySelector('.inline-edit-input');
+        textarea.focus();
+        textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+
+        textarea.addEventListener('dblclick', (evt) => evt.stopPropagation());
+        textarea.addEventListener('click', (evt) => evt.stopPropagation());
+
+        const cancelBtn = cell.querySelector('.btn-edit-cancel');
+        const saveBtn = cell.querySelector('.btn-edit-save');
+
+        cancelBtn.addEventListener('click', (evt) => {
+            evt.stopPropagation();
+            cell.innerHTML = originalHTML;
+        });
+
+        saveBtn.addEventListener('click', (evt) => {
+            evt.stopPropagation();
+            const newVal = textarea.value.trim();
+
+            textarea.disabled = true;
+            cancelBtn.disabled = true;
+            saveBtn.disabled = true;
+            saveBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i><span> Lưu</span>';
+
+            fetch('/api/projects-dashboard/update-giai-trinh', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ project_id: projectId, x_studio_giai_trinh: newVal })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.ok) {
+                    if (project) {
+                        project.x_studio_giai_trinh = newVal;
+                    }
+                    showToast("Cập nhật giải trình lên Odoo thành công");
+                    cell.title = newVal || '-';
+                    cell.innerHTML = `
+                        <span class="giai-trinh-text" style="font-weight: 500; font-size: 0.85rem; line-height: 1.4; max-width: 75px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; color: var(--color-text-primary);">${escapeHTML(newVal) || '-'}</span>
+                        <button class="btn-giai-trinh-edit" style="position: absolute; right: 8px; top: 50%; transform: translateY(-50%); background: none; border: none; color: var(--color-emerald); cursor: pointer; padding: 4px; display: flex; align-items: center; justify-content: center; border-radius: 4px; transition: all 0.2s;" title="Chỉnh sửa giải trình" onmouseover="this.style.background='rgba(16, 120, 80, 0.1)'" onmouseout="this.style.background='none'">
+                            <i class="fas fa-pencil-alt" style="font-size: 0.85rem;"></i>
+                        </button>
+                    `;
+                } else {
+                    throw new Error("Không thể cập nhật");
+                }
+            })
+            .catch(err => {
+                showToast("Lỗi: " + err.message, "error");
+                cell.innerHTML = originalHTML;
+            });
+        });
+    }
+
+    // Trigger edit via click on the Edit button
+    document.getElementById('projectsTable')?.addEventListener('click', (e) => {
+        // Cost breakdown expand/collapse
+        const expandBtn = e.target.closest('.cost-expand-btn');
+        if (expandBtn) {
+            e.stopPropagation();
+            const projectId = expandBtn.dataset.projectId;
+            const breakdownRow = document.querySelector(`tr[data-breakdown-for="${projectId}"]`);
+            const icon = expandBtn.querySelector('i');
+            if (breakdownRow) {
+                const isVisible = breakdownRow.style.display !== 'none';
+                breakdownRow.style.display = isVisible ? 'none' : 'table-row';
+                if (icon) icon.style.transform = isVisible ? 'rotate(0deg)' : 'rotate(90deg)';
+                expandBtn.style.background = isVisible ? 'none' : 'rgba(16, 120, 80, 0.1)';
+            }
+            return;
+        }
+        // Edit giai trinh button
+        const editBtn = e.target.closest('.btn-giai-trinh-edit');
+        if (editBtn) {
+            e.stopPropagation();
+            const cell = editBtn.closest('td.giai-trinh-cell');
+            triggerInlineEdit(cell);
+        }
+    });
+
+    // Trigger edit via double-click on the cell container
+    document.getElementById('projectsTable')?.addEventListener('dblclick', (e) => {
+        const cell = e.target.closest('td.giai-trinh-cell');
+        if (cell) {
+            e.stopPropagation();
+            triggerInlineEdit(cell);
+        }
+    });
+
+    // Login Form Submit Handler
+    document.getElementById('loginForm')?.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const usernameInput = document.getElementById('loginUsername');
+        const passwordInput = document.getElementById('loginPassword');
+        const errorMsg = document.getElementById('loginErrorMessage');
+        const submitBtn = e.target.querySelector('button[type="submit"]');
+
+        if (!usernameInput || !passwordInput) return;
+
+        const username = usernameInput.value.trim();
+        const password = passwordInput.value;
+
+        if (errorMsg) errorMsg.style.display = 'none';
+        if (submitBtn) {
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Đang đăng nhập...';
+        }
+
+        try {
+            const res = await fetch('/api/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password })
+            });
+            const data = await res.json();
+            if (res.ok && data.ok) {
+                initApp();
+            } else {
+                if (errorMsg) {
+                    errorMsg.querySelector('span').textContent = data.error || 'Sai tên đăng nhập hoặc mật khẩu';
+                    errorMsg.style.display = 'flex';
+                }
+                passwordInput.value = '';
+            }
+        } catch (err) {
+            if (errorMsg) {
+                errorMsg.querySelector('span').textContent = 'Lỗi kết nối đến máy chủ';
+                errorMsg.style.display = 'flex';
+            }
+        } finally {
+            if (submitBtn) {
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = '<i class="fas fa-sign-in-alt"></i> Đăng nhập';
+            }
+        }
+    });
+
+    // Logout Button Click Handler
+    document.getElementById('logoutBtn')?.addEventListener('click', async () => {
+        try {
+            await fetch('/api/logout', { method: 'POST' });
+            state.dashboardData = null;
+            state.selectedProjects.clear();
+            localStorage.removeItem('dashboard_roi_ui_state');
+            location.reload();
+        } catch (err) {
+            console.error('Lỗi khi đăng xuất:', err);
+            location.reload();
+        }
     });
 });

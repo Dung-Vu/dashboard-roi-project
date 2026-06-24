@@ -1,457 +1,738 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="vi">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="Bonario ROI Dashboard - Theo doi hieu qua du an noi that">
-    <meta name="theme-color" content="#0c2317">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Bonario ROI Dashboard - Theo doi hieu qua du an noi that"
+    />
+    <meta name="theme-color" content="#0c2317" />
     <title>Bonario ROI Dashboard</title>
-    <link rel="icon" type="image/png" href="/assets/bg.png">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" crossorigin="anonymous">
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" crossorigin="anonymous"></script>
-    <link rel="stylesheet" href="styles.css">
+    <link rel="icon" type="image/png" href="/assets/favicon.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&family=Outfit:wght@300;400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"
+      crossorigin="anonymous"
+    />
+    <script
+      src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"
+      crossorigin="anonymous"
+    ></script>
+    <link rel="stylesheet" href="styles.css" />
     <style>
-        .skip-link {
-            position: absolute;
-            top: -40px;
-            left: 0;
-            background: var(--color-emerald, #0c2317);
-            color: #fff;
-            padding: 0.5rem 1rem;
-            z-index: 9999;
-            text-decoration: none;
-            font-weight: 600;
-        }
-        .skip-link:focus {
-            top: 0;
-        }
-        .welcome-panel-heading {
-            font-family: var(--font-heading);
-            font-weight: 700;
-            color: var(--color-emerald);
-            margin-bottom: 1rem;
-            font-size: 1.5rem;
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-        }
-        .welcome-panel-desc {
-            color: var(--color-text-secondary);
-            line-height: 1.6;
-            font-size: 0.95rem;
-            margin-bottom: 1.5rem;
-            font-weight: 500;
-        }
-        .welcome-cards-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 1.5rem;
-            margin-top: 2rem;
-        }
-        .welcome-card {
-            padding: 1.5rem;
-            text-align: center;
-            cursor: pointer;
-            transition: var(--transition-smooth);
-            height: 100%;
-        }
-        .welcome-card-icon {
-            font-size: 2rem;
-            color: var(--color-emerald);
-            margin-bottom: 0.75rem;
-        }
-        .welcome-card-title {
-            color: var(--color-text-primary);
-            font-weight: 700;
-            margin-bottom: 0.5rem;
-            font-size: 1rem;
-        }
-        .welcome-card-desc {
-            color: var(--color-text-secondary);
-            font-size: 0.8rem;
-            font-weight: 500;
-        }
+      .skip-link {
+        position: absolute;
+        top: -40px;
+        left: 0;
+        background: var(--color-emerald, #0c2317);
+        color: #fff;
+        padding: 0.5rem 1rem;
+        z-index: 9999;
+        text-decoration: none;
+        font-weight: 600;
+      }
+      .skip-link:focus {
+        top: 0;
+      }
+      .welcome-panel-heading {
+        font-family: var(--font-heading);
+        font-weight: 700;
+        color: var(--color-emerald);
+        margin-bottom: 1rem;
+        font-size: 1.5rem;
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+      }
+      .welcome-panel-desc {
+        color: var(--color-text-secondary);
+        line-height: 1.6;
+        font-size: 0.95rem;
+        margin-bottom: 1.5rem;
+        font-weight: 500;
+      }
+      .welcome-cards-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 1.5rem;
+        margin-top: 2rem;
+      }
+      .welcome-card {
+        padding: 1.5rem;
+        text-align: center;
+        cursor: pointer;
+        transition: var(--transition-smooth);
+        height: 100%;
+      }
+      .welcome-card-icon {
+        font-size: 2rem;
+        color: var(--color-emerald);
+        margin-bottom: 0.75rem;
+      }
+      .welcome-card-title {
+        color: var(--color-text-primary);
+        font-weight: 700;
+        margin-bottom: 0.5rem;
+        font-size: 1rem;
+      }
+      .welcome-card-desc {
+        color: var(--color-text-secondary);
+        font-size: 0.8rem;
+        font-weight: 500;
+      }
     </style>
-</head>
-<body>
+  </head>
+  <body>
     <a href="#mainContent" class="skip-link">Skip to content</a>
 
     <!-- Background glowing mist decoration -->
     <div class="bg-blur-container">
-        <div class="glow-orb orb-1" aria-hidden="true"></div>
-        <div class="glow-orb orb-2" aria-hidden="true"></div>
-        <div class="glow-orb orb-3" aria-hidden="true"></div>
-        <div class="glow-orb orb-4" aria-hidden="true"></div>
-        <div class="particles-container" aria-hidden="true">
-            <div class="particle p1" aria-hidden="true"></div>
-            <div class="particle p2" aria-hidden="true"></div>
-            <div class="particle p3" aria-hidden="true"></div>
-            <div class="particle p4" aria-hidden="true"></div>
-            <div class="particle p5" aria-hidden="true"></div>
-            <div class="particle p6" aria-hidden="true"></div>
-            <div class="particle p7" aria-hidden="true"></div>
-            <div class="particle p8" aria-hidden="true"></div>
+      <div class="glow-orb orb-1" aria-hidden="true"></div>
+      <div class="glow-orb orb-2" aria-hidden="true"></div>
+      <div class="glow-orb orb-3" aria-hidden="true"></div>
+      <div class="glow-orb orb-4" aria-hidden="true"></div>
+      <div class="particles-container" aria-hidden="true">
+        <div class="particle p1" aria-hidden="true"></div>
+        <div class="particle p2" aria-hidden="true"></div>
+        <div class="particle p3" aria-hidden="true"></div>
+        <div class="particle p4" aria-hidden="true"></div>
+        <div class="particle p5" aria-hidden="true"></div>
+        <div class="particle p6" aria-hidden="true"></div>
+        <div class="particle p7" aria-hidden="true"></div>
+        <div class="particle p8" aria-hidden="true"></div>
+      </div>
+    </div>
+
+    <!-- Beautiful Glassmorphic Login Overlay -->
+    <div id="loginContainer" class="login-container">
+      <div class="login-card animate-fade-in">
+        <div class="login-brand">
+          <div class="brand-logo-large" aria-hidden="true"></div>
+          <h2>Bonario <span class="accent-text">ROI</span></h2>
+          <p class="login-subtitle">Hệ thống theo dõi hiệu quả dự án</p>
         </div>
+        <form id="loginForm" class="login-form">
+          <div class="form-group">
+            <label for="loginUsername"><i class="fas fa-user"></i> Tài khoản</label>
+            <input type="text" id="loginUsername" placeholder="Nhập tài khoản" required autocomplete="username" />
+          </div>
+          <div class="form-group">
+            <label for="loginPassword"><i class="fas fa-lock"></i> Mật khẩu</label>
+            <input type="password" id="loginPassword" placeholder="Nhập mật khẩu" required autocomplete="current-password" />
+          </div>
+          <div id="loginErrorMessage" class="login-error-message" style="display: none;">
+            <i class="fas fa-exclamation-circle"></i> <span>Tài khoản hoặc mật khẩu không chính xác.</span>
+          </div>
+          <button type="submit" class="btn btn-primary-forest w-full btn-login">
+            <i class="fas fa-sign-in-alt"></i> Đăng nhập
+          </button>
+        </form>
+      </div>
     </div>
 
     <!-- App Main Layout -->
-    <div class="app-layout">
-        
-        <!-- Sticky Left Sidebar (Deep Emerald) -->
-        <aside class="sidebar" aria-label="Main navigation sidebar">
-            <div class="sidebar-brand">
-                <div class="brand-logo" aria-hidden="true"></div>
-                <span class="brand-name">Bonario <span class="accent-text">ROI</span></span>
-            </div>
-            
-            <nav class="sidebar-menu" aria-label="Dashboard navigation">
-                <div class="menu-indicator" id="menuIndicator" aria-hidden="true"></div>
-                <a href="#/overview" class="menu-item active">
-                    <i class="fas fa-chart-pie" aria-hidden="true"></i>
-                    Tổng quan dự án
-                </a>
-                <a href="#/tags" class="menu-item">
-                    <i class="fas fa-tags" aria-hidden="true"></i>
-                    Hiệu suất theo Tag
-                </a>
-                <a href="#/projects" class="menu-item">
-                    <i class="fas fa-list-ul" aria-hidden="true"></i>
-                    Danh sách chi tiết
-                </a>
-                <a href="#/ranks" class="menu-item">
-                    <i class="fas fa-trophy" aria-hidden="true"></i>
-                    Xếp hạng & Biểu đồ
-                </a>
-            </nav>
-            
-            <!-- Pulsing Connection Status Card in Sidebar -->
-            <div class="sidebar-status-card">
-                <div class="status-header">
-                    <span class="status-dot pulsing" aria-hidden="true"></span>
-                    <span class="status-title">Odoo Connected</span>
-                </div>
-                <div class="status-desc">Dữ liệu ROI được đồng bộ tự động từ hệ thống Bonario Odoo.</div>
-                <div class="date-picker-box">
-                    <label for="dateFrom">Từ ngày:</label>
-                    <input type="date" id="dateFrom" value="2026-01-01">
-                </div>
-                <div class="company-picker-box">
-                    <label>Company:</label>
-                    <button id="companySelectTrigger" class="custom-select-btn" type="button">
-                        <span id="selectedCompanyLabel">Tất cả công ty</span>
-                        <i class="fas fa-chevron-down" aria-hidden="true"></i>
-                    </button>
-                </div>
-                <button id="refreshBtn" class="btn btn-primary-forest w-full" style="margin-top: 1rem;">
-                    <i class="fas fa-sync-alt" aria-hidden="true"></i>
-                    <span>Đồng bộ Odoo</span>
-                </button>
-            </div>
-        </aside>
-
-        <!-- Right Main Content Area (Light Theme Sage Mist) -->
-        <div class="main-container">
-            
-            <!-- Loading State -->
-            <div id="loadingState" class="loading-state" role="status" aria-live="polite">
-                <div class="spinner"></div>
-                <p>Đang đồng bộ dữ liệu doanh thu...</p>
-            </div>
-
-            <!-- Error State -->
-            <div id="errorState" class="error-state" style="display: none;" role="alert" aria-live="assertive">
-                <i class="fas fa-exclamation-triangle" aria-hidden="true"></i>
-                <p id="errorMessage">Có lỗi xảy ra</p>
-                <button id="retryBtn" class="btn btn-primary-forest" style="margin-top: 0.5rem;">Thử lại</button>
-            </div>
-
-            <!-- Main Content Grid -->
-            <main id="mainContent" class="main-content" style="display: none;">
-                <noscript><div style="padding:2rem;text-align:center;color:#0c2317;"><h2>JavaScript Required</h2><p>This dashboard requires JavaScript to function.</p></div></noscript>
-                
-                <!-- Top Header Bar -->
-                <header class="top-header glass-panel">
-                    <div class="header-meta">
-                        <div class="status-indicator">
-                            <span>Đồng bộ cuối: <strong id="lastUpdated">-</strong></span>
-                        </div>
-                    </div>
-                </header>
-
-                <section id="dataScopeBar" class="data-scope-bar" aria-label="Dashboard data scope">
-                    <div class="scope-pill">
-                        <span class="scope-label">List</span>
-                        <strong id="scopeListCount">0</strong>
-                        <span class="pill-badge badge-blue">100%</span>
-                        <span class="scope-pill-desc">mọi trạng thái</span>
-                    </div>
-                    <div class="scope-pill">
-                        <span class="scope-label">KPI</span>
-                        <strong id="scopeDoneCount">0</strong>
-                        <span id="scopeDoneBadge" class="pill-badge badge-blue">-%</span>
-                        <span class="scope-pill-desc">Hoàn tất</span>
-                    </div>
-                    <div class="scope-pill">
-                        <span class="scope-label">Valid</span>
-                        <strong id="scopeValidDoneCount">0</strong>
-                        <span id="scopeValidBadge" class="pill-badge badge-green">-%</span>
-                        <span class="scope-pill-desc">BG &gt; 0</span>
-                    </div>
-                    <div class="scope-pill muted">
-                        <span class="scope-label">Từ ngày</span>
-                        <strong id="scopeDateFrom">2026-01-01</strong>
-                        <span id="scopeDaysBadge" class="pill-badge badge-gray">- ngày qua</span>
-                    </div>
-                </section>
-
-                <!-- Route 1: Tổng quan dự án -->
-                <section id="overview-route" class="route-view active">
-                    <div class="kpi-grid">
-                        <div class="kpi-card glass-panel border-blue">
-                            <div class="kpi-header">
-                                <div class="kpi-title">Tổng số dự án</div>
-                                <div class="kpi-icon-wrapper emerald-glow">
-                                    <i class="fas fa-project-diagram" aria-hidden="true"></i>
-                                </div>
-                            </div>
-                            <div class="kpi-body">
-                                <div class="kpi-value" id="totalProjects">0</div>
-                                <div class="kpi-subtitle" id="validProjects" style="color: var(--color-text-secondary); font-weight: 500;">0 dự án hợp lệ</div>
-                            </div>
-                        </div>
-                        <div class="kpi-card glass-panel border-green">
-                            <div class="kpi-header">
-                                <div class="kpi-title">Tổng doanh thu (BG)</div>
-                                <div class="kpi-icon-wrapper mint-glow">
-                                    <i class="fas fa-dollar-sign" aria-hidden="true"></i>
-                                </div>
-                            </div>
-                            <div class="kpi-body">
-                                <div class="kpi-value" id="totalBG">0</div>
-                                <div class="kpi-subtitle" style="color: var(--color-text-secondary); font-weight: 500;">Chưa thuế (Untaxed)</div>
-                            </div>
-                        </div>
-                        <div class="kpi-card glass-panel border-orange">
-                            <div class="kpi-header">
-                                <div class="kpi-title">Chi phí dự kiến</div>
-                                <div class="kpi-icon-wrapper clay-glow">
-                                    <i class="fas fa-coins" aria-hidden="true"></i>
-                                </div>
-                            </div>
-                            <div class="kpi-body">
-                                <div class="kpi-value" id="totalCost">0</div>
-                                <div class="kpi-subtitle" style="color: var(--color-text-secondary); font-weight: 500;">Adjusted Expected</div>
-                            </div>
-                        </div>
-                        <div class="kpi-card glass-panel border-purple">
-                            <div class="kpi-header">
-                                <div class="kpi-title">Lợi nhuận gộp</div>
-                                <div class="kpi-icon-wrapper emerald-glow">
-                                    <i class="fas fa-percentage" aria-hidden="true"></i>
-                                </div>
-                            </div>
-                            <div class="kpi-body">
-                                <div class="kpi-value" id="totalGP">0</div>
-                                <div class="kpi-subtitle" id="weightedGP">0% weighted</div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="ops-grid">
-                        <section class="ops-panel glass-panel">
-                            <div class="ops-panel-header">
-                                <h2><i class="fas fa-layer-group" aria-hidden="true"></i> Mix trạng thái</h2>
-                                <a href="#/projects" class="ops-link">Xem list</a>
-                            </div>
-                            <div id="stateMixPanel" class="state-mix-list"></div>
-                        </section>
-                        <section class="ops-panel glass-panel">
-                            <div class="ops-panel-header">
-                                <h2><i class="fas fa-triangle-exclamation" aria-hidden="true"></i> GP cần chú ý</h2>
-                                <a href="#/projects" class="ops-link">Lọc chi tiết</a>
-                            </div>
-                            <div id="riskProjectsPanel" class="risk-list"></div>
-                        </section>
-                        <section class="ops-panel glass-panel">
-                            <div class="ops-panel-header">
-                                <h2><i class="fas fa-tags" aria-hidden="true"></i> Tag đang đóng góp</h2>
-                                <a href="#/tags" class="ops-link">Phân tích tag</a>
-                            </div>
-                            <div id="tagSnapshotPanel" class="tag-snapshot-list"></div>
-                        </section>
-                    </div>
-                </section>
-
-                <!-- Route 2: Hiệu suất theo tags -->
-                <section id="tags-route" class="route-view">
-                    <div class="section glass-panel">
-                        <h2 class="section-title" style="font-family: var(--font-heading); font-weight: 700; margin-bottom: 1.5rem;">
-                            <i class="fas fa-tags" aria-hidden="true"></i>
-                            Hiệu suất theo Tag nhóm
-                        </h2>
-                        <div id="tagAnalysis" class="tag-insights-grid">
-                            <!-- Dynamically Rendered Progress Indicators -->
-                        </div>
-                    </div>
-                </section>
-
-                <!-- Route 3: Danh sách chi tiết -->
-                <section id="projects-route" class="route-view">
-                    <div class="section glass-panel">
-                        <div class="section-header">
-                            <h2 class="section-title" style="font-family: var(--font-heading); font-weight: 700;">
-                                <i class="fas fa-table" aria-hidden="true"></i>
-                                Danh sách dự án chi tiết
-                            </h2>
-                            <div class="table-filters-box">
-                                <div class="search-box project-search-box">
-                                    <i class="fas fa-search search-icon" aria-hidden="true"></i>
-                                    <input type="text" id="searchInput" placeholder="Tìm mã BG, dự án, khách hàng..." aria-label="Search projects">
-                                </div>
-                                <select id="tagFilter" class="filter-select" aria-label="Filter by tag">
-                                    <option value="">Tất cả tags</option>
-                                </select>
-                                <select id="stateFilter" class="filter-select" aria-label="Filter by status">
-                                    <option value="">Tất cả trạng thái</option>
-                                    <option value="Done">Hoàn tất</option>
-                                    <option value="In progress">Đang xử lý</option>
-                                    <option value="Need process">Cần xử lý</option>
-                                </select>
-                                <select id="healthFilter" class="filter-select" aria-label="Filter by GP health">
-                                    <option value="">Tất cả GP</option>
-                                    <option value="high">GP tốt (&gt; 40%)</option>
-                                    <option value="medium">GP cần theo dõi (15-40%)</option>
-                                    <option value="low">GP thấp (&lt; 15%)</option>
-                                    <option value="missing">Chưa có GP</option>
-                                </select>
-                            </div>
-                        </div>
-
-                        <div id="multiSelectPanel" class="multi-select-panel" style="display:none;">
-                            <div class="multi-select-header">
-                                <span class="multi-select-count"><strong id="selectedCount">0</strong> dự án được chọn</span>
-                                <button id="clearSelection" class="btn-clear-selection">✕ Bỏ chọn tất cả</button>
-                            </div>
-                            <div class="multi-select-kpis">
-                                <div class="multi-kpi">
-                                    <span class="multi-kpi-label">Tổng báo giá</span>
-                                    <span class="multi-kpi-value" id="selectedTotalBG">0 ₫</span>
-                                </div>
-                                <div class="multi-kpi">
-                                    <span class="multi-kpi-label">Tổng chi phí</span>
-                                    <span class="multi-kpi-value" id="selectedTotalCost">0 ₫</span>
-                                </div>
-                                <div class="multi-kpi">
-                                    <span class="multi-kpi-label">Tổng lợi nhuận</span>
-                                    <span class="multi-kpi-value" id="selectedTotalGP">0 ₫</span>
-                                </div>
-                                <div class="multi-kpi">
-                                    <span class="multi-kpi-label">GP% trung bình</span>
-                                    <span class="multi-kpi-value" id="selectedAvgGP">-</span>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="table-wrapper">
-                            <table class="data-table">
-                                <thead>
-                                    <tr>
-                                        <th scope="col" style="width: 40px;"><input type="checkbox" id="selectAll" aria-label="Select all projects on this page"></th>
-                                        <th scope="col" class="sortable" data-sort="sale_order_name">Mã BG</th>
-                                        <th scope="col" class="sortable" data-sort="project_name">Tên dự án</th>
-                                        <th scope="col" class="sortable" data-sort="customer">Khách hàng</th>
-                                        <th scope="col">Tags</th>
-                                        <th scope="col">Trạng thái</th>
-                                        <th scope="col" class="text-right sortable" data-sort="bg_untaxed">BG Untaxed</th>
-                                        <th scope="col" class="text-right sortable" data-sort="adjusted_expected_cost">Chi phí</th>
-                                        <th scope="col" class="text-right sortable" data-sort="gp_amount">Lợi nhuận</th>
-                                        <th scope="col" class="text-right sortable" data-sort="gp_percent">GP%</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="projectsTable"></tbody>
-                            </table>
-                        </div>
-                        <div class="table-footer">
-                            <span id="tableInfo">Hiển thị 0 dự án</span>
-                            <div id="pagination" class="pagination"></div>
-                        </div>
-                    </div>
-                </section>
-
-                <!-- Route 4: Xếp hạng & Biểu đồ -->
-                <section id="ranks-route" class="route-view">
-                    <div class="dashboard-grid">
-                        <!-- Left Column: Bar + Doughnut -->
-                        <div class="column-left" style="display: flex; flex-direction: column; gap: 2rem;">
-                            <div class="section glass-panel" style="margin-bottom: 0; padding: 25px;">
-                                <h2 class="section-title" style="margin-bottom: 1.25rem;">
-                                    <i class="fas fa-chart-bar" aria-hidden="true"></i>
-                                    Phân bổ GP% theo nhóm Tag
-                                </h2>
-                                <div class="chart-container" style="height: 320px;">
-                                    <canvas id="gpChart" aria-label="Bieu do phan bo GP% theo nhom Tag"></canvas>
-                                </div>
-                            </div>
-                            <div class="section glass-panel" style="margin-bottom: 0; padding: 25px;">
-                                <h2 class="section-title" style="margin-bottom: 1.25rem;">
-                                    <i class="fas fa-chart-pie" aria-hidden="true"></i>
-                                    Đóng góp Doanh thu theo nhóm Tag
-                                </h2>
-                                <div class="chart-container" style="height: 300px; display: flex; justify-content: center; align-items: center;">
-                                    <canvas id="revenueDoughnutChart" style="max-width: 450px;" aria-label="Bieu do phan bo doanh thu theo nhom Tag"></canvas>
-                                </div>
-                            </div>
-                        </div>
-                        <!-- Right Column: Leaderboard -->
-                        <div class="column-right">
-                            <div class="section glass-panel" style="padding: 25px;">
-                                <h2 class="section-title" style="margin-bottom: 1.25rem;">
-                                    <i class="fas fa-medal" aria-hidden="true"></i>
-                                    Bảng xếp hạng hiệu suất Tag
-                                </h2>
-                                <div id="tagLeaderboard" class="leaderboard-list"></div>
-                            </div>
-                        </div>
-                    </div>
-                </section>
-                
-            </main>
+    <div class="app-layout" style="display: none;">
+      <!-- Sticky Left Sidebar (Deep Emerald) -->
+      <aside class="sidebar" aria-label="Main navigation sidebar">
+        <div class="sidebar-brand">
+          <div class="brand-logo" aria-hidden="true"></div>
+          <span class="brand-name"
+            >Bonario <span class="accent-text">ROI</span></span
+          >
         </div>
+
+        <nav class="sidebar-menu" aria-label="Dashboard navigation">
+          <div
+            class="menu-indicator"
+            id="menuIndicator"
+            aria-hidden="true"
+          ></div>
+          <a href="#/overview" class="menu-item active">
+            <i class="fas fa-chart-pie" aria-hidden="true"></i>
+            Tổng quan dự án
+          </a>
+          <a href="#/tags" class="menu-item">
+            <i class="fas fa-tags" aria-hidden="true"></i>
+            Hiệu suất theo Tag
+          </a>
+          <a href="#/projects" class="menu-item">
+            <i class="fas fa-list-ul" aria-hidden="true"></i>
+            Danh sách chi tiết
+          </a>
+
+          <a href="#/ranks" class="menu-item">
+            <i class="fas fa-trophy" aria-hidden="true"></i>
+            Xếp hạng & Biểu đồ
+          </a>
+          <button id="logoutBtn" class="menu-item logout-btn" style="background: none; border: none; width: calc(100% - 1rem); text-align: left; cursor: pointer; margin: 1.5rem 0.5rem 0 0.5rem; display: flex; align-items: center; gap: 0.75rem; color: #ef4444 !important;">
+            <i class="fas fa-sign-out-alt" aria-hidden="true" style="color: #ef4444; width: 18px; text-align: center;"></i>
+            <span style="color: #ef4444; font-weight: 600;">Đăng xuất</span>
+          </button>
+        </nav>
+
+        <!-- Pulsing Connection Status Card in Sidebar -->
+        <div class="sidebar-status-card">
+          <div class="status-header">
+            <span class="status-dot pulsing" aria-hidden="true"></span>
+            <span class="status-title">Odoo Connected</span>
+          </div>
+          <div class="status-desc">
+            Dữ liệu ROI được đồng bộ tự động từ hệ thống Bonario Odoo.
+          </div>
+          <div class="date-picker-box">
+            <label for="dateFrom">Từ ngày:</label>
+            <input type="date" id="dateFrom" value="2026-01-01" />
+          </div>
+          <div class="company-picker-box">
+            <label>Company:</label>
+            <button
+              id="companySelectTrigger"
+              class="custom-select-btn"
+              type="button"
+            >
+              <span id="selectedCompanyLabel">Tất cả công ty</span>
+              <i class="fas fa-chevron-down" aria-hidden="true"></i>
+            </button>
+          </div>
+          <button
+            id="refreshBtn"
+            class="btn btn-primary-forest w-full"
+            style="margin-top: 1rem"
+          >
+            <i class="fas fa-sync-alt" aria-hidden="true"></i>
+            <span>Đồng bộ Odoo</span>
+          </button>
+        </div>
+      </aside>
+
+      <!-- Right Main Content Area (Light Theme Sage Mist) -->
+      <div class="main-container">
+        <!-- Loading State -->
+        <div
+          id="loadingState"
+          class="loading-state"
+          role="status"
+          aria-live="polite"
+        >
+          <div class="spinner"></div>
+          <p>Đang đồng bộ dữ liệu doanh thu...</p>
+        </div>
+
+        <!-- Error State -->
+        <div
+          id="errorState"
+          class="error-state"
+          style="display: none"
+          role="alert"
+          aria-live="assertive"
+        >
+          <i class="fas fa-exclamation-triangle" aria-hidden="true"></i>
+          <p id="errorMessage">Có lỗi xảy ra</p>
+          <button
+            id="retryBtn"
+            class="btn btn-primary-forest"
+            style="margin-top: 0.5rem"
+          >
+            Thử lại
+          </button>
+        </div>
+
+        <!-- Main Content Grid -->
+        <main id="mainContent" class="main-content" style="display: none">
+          <noscript
+            ><div style="padding: 2rem; text-align: center; color: #0c2317">
+              <h2>JavaScript Required</h2>
+              <p>This dashboard requires JavaScript to function.</p>
+            </div></noscript
+          >
+
+          <!-- Top Header Bar -->
+          <header class="top-header glass-panel">
+            <div class="header-meta">
+              <div class="status-indicator" style="display: flex; align-items: center; gap: 0.75rem;">
+                <span>Đồng bộ cuối: <strong id="lastUpdated">-</strong></span>
+                <span id="syncStatusIndicator" style="display: none; align-items: center; padding: 2px 8px; border-radius: 99px; font-size: 0.75rem; font-weight: 600; color: #d97706; background: rgba(217, 119, 6, 0.1); border: 1px solid rgba(217, 119, 6, 0.2);"><i class="fas fa-exclamation-triangle fa-spin" style="margin-right: 4px;"></i> Mất kết nối Odoo - Đang thử lại...</span>
+              </div>
+            </div>
+          </header>
+
+          <section
+            id="dataScopeBar"
+            class="data-scope-bar"
+            aria-label="Dashboard data scope"
+          >
+            <div class="scope-pill">
+              <span class="scope-label">List</span>
+              <strong id="scopeListCount">0</strong>
+              <span class="scope-pill-desc">dự án</span>
+            </div>
+            <div class="scope-pill muted">
+              <span class="scope-label">Từ ngày</span>
+              <strong id="scopeDateFrom">2026-01-01</strong>
+              <span id="scopeDaysBadge" class="pill-badge badge-gray"
+                >- ngày qua</span
+              >
+            </div>
+          </section>
+
+          <!-- Route 1: Tổng quan dự án -->
+          <section id="overview-route" class="route-view active">
+            <div class="kpi-grid">
+              <div class="kpi-card glass-panel border-blue">
+                <div class="kpi-header">
+                  <div class="kpi-title">Tổng số dự án</div>
+                  <div class="kpi-icon-wrapper emerald-glow">
+                    <i class="fas fa-project-diagram" aria-hidden="true"></i>
+                  </div>
+                </div>
+                <div class="kpi-body">
+                  <div class="kpi-value" id="totalProjects">0</div>
+                  <div
+                    class="kpi-subtitle"
+                    id="validProjects"
+                    style="color: var(--color-text-secondary); font-weight: 500"
+                  >
+                    0 dự án hợp lệ
+                  </div>
+                </div>
+              </div>
+              <div class="kpi-card glass-panel border-green">
+                <div class="kpi-header">
+                  <div class="kpi-title">Tổng doanh thu (BG)</div>
+                  <div class="kpi-icon-wrapper mint-glow">
+                    <i class="fas fa-dollar-sign" aria-hidden="true"></i>
+                  </div>
+                </div>
+                <div class="kpi-body">
+                  <div class="kpi-value" id="totalBG">0</div>
+                  <div
+                    class="kpi-subtitle"
+                    style="color: var(--color-text-secondary); font-weight: 500"
+                  >
+                    Chưa thuế (Untaxed)
+                  </div>
+                </div>
+              </div>
+              <div class="kpi-card glass-panel border-orange">
+                <div class="kpi-header">
+                  <div class="kpi-title">Chi phí dự kiến</div>
+                  <div class="kpi-icon-wrapper clay-glow">
+                    <i class="fas fa-coins" aria-hidden="true"></i>
+                  </div>
+                </div>
+                <div class="kpi-body">
+                  <div class="kpi-value" id="totalCost">0</div>
+                  <div
+                    class="kpi-subtitle"
+                    style="color: var(--color-text-secondary); font-weight: 500"
+                  >
+                    Adjusted Expected
+                  </div>
+                </div>
+              </div>
+              <div class="kpi-card glass-panel border-purple">
+                <div class="kpi-header">
+                  <div class="kpi-title">Lợi nhuận gộp</div>
+                  <div class="kpi-icon-wrapper emerald-glow">
+                    <i class="fas fa-percentage" aria-hidden="true"></i>
+                  </div>
+                </div>
+                <div class="kpi-body">
+                  <div class="kpi-value" id="totalGP">0</div>
+                  <div class="kpi-subtitle" id="weightedGP">0% weighted</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="ops-grid">
+              <section class="ops-panel glass-panel">
+                <div class="ops-panel-header">
+                  <h2>
+                    <i class="fas fa-layer-group" aria-hidden="true"></i> Theo
+                    trạng thái đơn hàng
+                  </h2>
+                  <a href="#/projects" class="ops-link">Xem list</a>
+                </div>
+                <div id="stateMixPanel" class="state-mix-list"></div>
+              </section>
+              <section class="ops-panel glass-panel">
+                <div class="ops-panel-header">
+                  <h2>
+                    <i
+                      class="fas fa-triangle-exclamation"
+                      aria-hidden="true"
+                    ></i>
+                    GP cần chú ý
+                  </h2>
+                  <a href="#/projects" class="ops-link">Lọc chi tiết</a>
+                </div>
+                <div id="riskProjectsPanel" class="risk-list"></div>
+              </section>
+              <section class="ops-panel glass-panel">
+                <div class="ops-panel-header">
+                  <h2>
+                    <i class="fas fa-tags" aria-hidden="true"></i> Tag đang đóng
+                    góp
+                  </h2>
+                  <a href="#/tags" class="ops-link">Phân tích tag</a>
+                </div>
+                <div id="tagSnapshotPanel" class="tag-snapshot-list"></div>
+              </section>
+            </div>
+          </section>
+
+          <!-- Route 2: Hiệu suất theo tags -->
+          <section id="tags-route" class="route-view">
+            <!-- Stacked Revenue Segment Chart: Full-Width Card -->
+            <div class="section glass-panel" style="margin-bottom: 2rem; padding: 25px;">
+              <h2 class="section-title" style="margin-bottom: 0.5rem; font-family: var(--font-heading); font-weight: 700;">
+                <i class="fas fa-chart-bar" aria-hidden="true" style="color: var(--color-mint); margin-right: 8px;"></i>
+                Doanh thu tích lũy theo Phân khúc giá trị (Tính theo số tiền VND)
+              </h2>
+              <p style="font-size: 0.85rem; color: var(--color-text-secondary); margin-top: 0; margin-bottom: 1.5rem; line-height: 1.5;">
+                Thể hiện tổng số tiền doanh thu mang lại của các nhóm tag trong từng dải giá trị dự án.
+              </p>
+              <div class="chart-container" style="height: 320px; position: relative;">
+                <canvas id="stackedRevenueChart" aria-label="Biểu đồ cột chồng phân khúc doanh thu"></canvas>
+              </div>
+            </div>
+
+            <!-- GP% Distribution Charts: Glassmorphism 2x2 Grid -->
+            <div class="dashboard-grid tag-gp-grid" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px;">
+              <!-- 1. Nội thất rời -->
+              <div class="section glass-panel" style="margin-bottom: 0; padding: 20px;">
+                <h2 class="section-title" style="font-size: 1.05rem; margin-bottom: 0.5rem; font-family: var(--font-heading); font-weight: 700;">
+                  <i class="fas fa-couch" aria-hidden="true" style="color: #2b6cb0; margin-right: 8px;"></i>
+                  Phân bổ hiệu suất GP% - Nội thất rời (Tính theo số lượng dự án)
+                </h2>
+                <p style="font-size: 0.8rem; color: var(--color-text-secondary); margin-top: 0; margin-bottom: 1rem; line-height: 1.4;">
+                  Thống kê tần suất xuất hiện (số lượng) của các dự án trong từng dải phần trăm lợi nhuận GP%.
+                </p>
+                <div class="chart-container" style="height: 220px; position: relative;">
+                  <canvas id="gpTagNoiThatRoi" aria-label="Biểu đồ phân bổ GP% - Nội thất rời"></canvas>
+                </div>
+              </div>
+
+              <!-- 2. Giấy dán tường -->
+              <div class="section glass-panel" style="margin-bottom: 0; padding: 20px;">
+                <h2 class="section-title" style="font-size: 1.05rem; margin-bottom: 0.5rem; font-family: var(--font-heading); font-weight: 700;">
+                  <i class="fas fa-scroll" aria-hidden="true" style="color: #f6ad55; margin-right: 8px;"></i>
+                  Phân bổ hiệu suất GP% - Giấy dán tường (Tính theo số lượng dự án)
+                </h2>
+                <p style="font-size: 0.8rem; color: var(--color-text-secondary); margin-top: 0; margin-bottom: 1rem; line-height: 1.4;">
+                  Thống kê tần suất xuất hiện (số lượng) của các dự án trong từng dải phần trăm lợi nhuận GP%.
+                </p>
+                <div class="chart-container" style="height: 220px; position: relative;">
+                  <canvas id="gpTagGiayDanTuong" aria-label="Biểu đồ phân bổ GP% - Giấy dán tường"></canvas>
+                </div>
+              </div>
+
+              <!-- 3. Rèm -->
+              <div class="section glass-panel" style="margin-bottom: 0; padding: 20px;">
+                <h2 class="section-title" style="font-size: 1.05rem; margin-bottom: 0.5rem; font-family: var(--font-heading); font-weight: 700;">
+                  <i class="fas fa-wind" aria-hidden="true" style="color: #319795; margin-right: 8px;"></i>
+                  Phân bổ hiệu suất GP% - Rèm (Tính theo số lượng dự án)
+                </h2>
+                <p style="font-size: 0.8rem; color: var(--color-text-secondary); margin-top: 0; margin-bottom: 1rem; line-height: 1.4;">
+                  Thống kê tần suất xuất hiện (số lượng) của các dự án trong từng dải phần trăm lợi nhuận GP%.
+                </p>
+                <div class="chart-container" style="height: 220px; position: relative;">
+                  <canvas id="gpTagRem" aria-label="Biểu đồ phân bổ GP% - Rèm"></canvas>
+                </div>
+              </div>
+
+              <!-- 4. Vải nội thất -->
+              <div class="section glass-panel" style="margin-bottom: 0; padding: 20px;">
+                <h2 class="section-title" style="font-size: 1.05rem; margin-bottom: 0.5rem; font-family: var(--font-heading); font-weight: 700;">
+                  <i class="fas fa-palette" aria-hidden="true" style="color: #9f7aea; margin-right: 8px;"></i>
+                  Phân bổ hiệu suất GP% - Vải nội thất (Tính theo số lượng dự án)
+                </h2>
+                <p style="font-size: 0.8rem; color: var(--color-text-secondary); margin-top: 0; margin-bottom: 1rem; line-height: 1.4;">
+                  Thống kê tần suất xuất hiện (số lượng) của các dự án trong từng dải phần trăm lợi nhuận GP%.
+                </p>
+                <div class="chart-container" style="height: 220px; position: relative;">
+                  <canvas id="gpTagVaiNoiThat" aria-label="Biểu đồ phân bổ GP% - Vải nội thất"></canvas>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- Route 3: Danh sách chi tiết -->
+          <section id="projects-route" class="route-view">
+            <div class="section glass-panel">
+              <div class="section-header">
+                <h2
+                  class="section-title"
+                  style="font-family: var(--font-heading); font-weight: 700"
+                >
+                  <i class="fas fa-table" aria-hidden="true"></i>
+                  Danh sách dự án chi tiết
+                </h2>
+                <div class="table-filters-box">
+                  <div class="search-box project-search-box">
+                    <i class="fas fa-search search-icon" aria-hidden="true"></i>
+                    <input
+                      type="text"
+                      id="searchInput"
+                      placeholder="Tìm mã BG, dự án, khách hàng..."
+                      aria-label="Search projects"
+                    />
+                  </div>
+                  <select
+                    id="tagFilter"
+                    class="filter-select"
+                    aria-label="Filter by tag"
+                  >
+                    <option value="">Tất cả tags</option>
+                  </select>
+                  <select
+                    id="stateFilter"
+                    class="filter-select"
+                    aria-label="Filter by status"
+                  >
+                    <option value="">Tất cả trạng thái</option>
+                    <option value="Done">Hoàn tất</option>
+                    <option value="In progress">Đang xử lý</option>
+                    <option value="Need process">Cần xử lý</option>
+                  </select>
+                  <select
+                    id="healthFilter"
+                    class="filter-select"
+                    aria-label="Filter by GP health"
+                  >
+                    <option value="">Tất cả GP</option>
+                    <option value="high">GP tốt (&gt; 40%)</option>
+                    <option value="medium">GP cần theo dõi (15-40%)</option>
+                    <option value="low">GP thấp (&lt; 15%)</option>
+                    <option value="missing">Chưa có GP</option>
+                  </select>
+                </div>
+              </div>
+
+              <div
+                id="multiSelectPanel"
+                class="multi-select-panel"
+                style="display: none"
+              >
+                <div class="multi-select-header">
+                  <span class="multi-select-count"
+                    ><strong id="selectedCount">0</strong> dự án được chọn</span
+                  >
+                  <button id="clearSelection" class="btn-clear-selection">
+                    ✕ Bỏ chọn tất cả
+                  </button>
+                </div>
+                <div class="multi-select-kpis">
+                  <div class="multi-kpi">
+                    <span class="multi-kpi-label">Tổng báo giá</span>
+                    <span class="multi-kpi-value" id="selectedTotalBG"
+                      >0 ₫</span
+                    >
+                  </div>
+                  <div class="multi-kpi">
+                    <span class="multi-kpi-label">Tổng chi phí</span>
+                    <span class="multi-kpi-value" id="selectedTotalCost"
+                      >0 ₫</span
+                    >
+                  </div>
+                  <div class="multi-kpi">
+                    <span class="multi-kpi-label">Tổng lợi nhuận</span>
+                    <span class="multi-kpi-value" id="selectedTotalGP"
+                      >0 ₫</span
+                    >
+                  </div>
+                  <div class="multi-kpi">
+                    <span class="multi-kpi-label">GP% trung bình</span>
+                    <span class="multi-kpi-value" id="selectedAvgGP">-</span>
+                  </div>
+                </div>
+              </div>
+              <div class="table-wrapper">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th scope="col" style="width: 40px">
+                        <input
+                          type="checkbox"
+                          id="selectAll"
+                          aria-label="Select all projects on this page"
+                        />
+                      </th>
+                      <th
+                        scope="col"
+                        class="sortable"
+                        data-sort="sale_order_name"
+                      >
+                        Mã BG
+                      </th>
+                      <th scope="col" class="sortable" data-sort="customer" style="width: 280px;">
+                        Khách hàng
+                      </th>
+                      <th scope="col">Tags</th>
+                      <th scope="col">Trạng thái</th>
+                      <th
+                        scope="col"
+                        class="text-right sortable"
+                        data-sort="bg_untaxed"
+                      >
+                        BG Untaxed
+                      </th>
+                      <th
+                        scope="col"
+                        class="text-right sortable"
+                        data-sort="adjusted_expected_cost"
+                      >
+                        Chi phí
+                      </th>
+                      <th
+                        scope="col"
+                        class="text-right sortable"
+                        data-sort="gp_amount"
+                      >
+                        Lợi nhuận
+                      </th>
+                      <th
+                        scope="col"
+                        class="text-right sortable"
+                        data-sort="gp_percent"
+                      >
+                        GP%
+                      </th>
+                      <th scope="col" class="sortable" data-sort="x_studio_giai_trinh" style="width: 120px;">
+                        Giải trình
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody id="projectsTable"></tbody>
+                </table>
+              </div>
+              <div class="table-footer">
+                <span id="tableInfo">Hiển thị 0 dự án</span>
+                <div id="pagination" class="pagination"></div>
+              </div>
+            </div>
+          </section>
+
+
+          <!-- Route 4: Xếp hạng & Biểu đồ -->
+          <section id="ranks-route" class="route-view">
+            <div class="dashboard-grid" style="grid-template-columns: 60% 40%">
+              <div
+                class="section glass-panel"
+                style="margin-bottom: 0; padding: 25px"
+              >
+                <h2 class="section-title" style="margin-bottom: 1.25rem">
+                  <i class="fas fa-chart-bar" aria-hidden="true"></i>
+                  Phân bổ GP% theo nhóm Tag
+                </h2>
+                <div class="chart-container" style="height: 340px">
+                  <canvas
+                    id="gpChart"
+                    aria-label="Bieu do phan bo GP% theo nhom Tag"
+                  ></canvas>
+                </div>
+              </div>
+              <div
+                class="section glass-panel"
+                style="margin-bottom: 0; padding: 25px"
+              >
+                <h2 class="section-title" style="margin-bottom: 1.25rem">
+                  <i class="fas fa-chart-pie" aria-hidden="true"></i>
+                  Đóng góp Doanh thu theo nhóm Tag
+                </h2>
+                <div
+                  class="chart-container"
+                  style="
+                    height: 340px;
+                    display: flex;
+                    justify-content: center;
+                    align-items: center;
+                  "
+                >
+                  <canvas
+                    id="revenueDoughnutChart"
+                    style="max-width: 100%"
+                    aria-label="Bieu do phan bo doanh thu theo nhom Tag"
+                  ></canvas>
+                </div>
+              </div>
+            </div>
+
+            <!-- New Full-Width Row for Monthly Trend -->
+            <div
+              class="section glass-panel"
+              style="margin-top: 2rem; padding: 25px"
+            >
+              <h2 class="section-title" style="margin-bottom: 1.25rem">
+                <i class="fas fa-chart-line" aria-hidden="true"></i>
+                Xu hướng Doanh thu & GP% bình quân theo tháng
+              </h2>
+              <div class="chart-container" style="height: 350px">
+                <canvas
+                  id="monthlyTrendChart"
+                  aria-label="Bieu do xu huong doanh thu va GP% theo thang"
+                ></canvas>
+              </div>
+            </div>
+          </section>
+        </main>
+      </div>
     </div>
 
     <!-- Company Selection Modal -->
-    <div id="companyModal" class="modal-overlay" style="display: none;">
-        <div class="modal-content glass-panel fade-in-up">
-            <div class="modal-header">
-                <h3>Chọn công ty</h3>
-                <button id="closeCompanyModal" class="close-modal-btn" aria-label="Close modal">✕</button>
-            </div>
-            <div class="modal-body">
-                <div class="company-options-list">
-                    <button class="company-opt-btn active" data-value="all" type="button">
-                        <i class="fas fa-globe" aria-hidden="true"></i>
-                        <span>Tất cả công ty</span>
-                    </button>
-                    <button class="company-opt-btn" data-value="bonario" type="button">
-                        <i class="fas fa-building" aria-hidden="true"></i>
-                        <span>Bonario</span>
-                    </button>
-                    <button class="company-opt-btn" data-value="ordinaire" type="button">
-                        <i class="fas fa-building-user" aria-hidden="true"></i>
-                        <span>Ordinaire</span>
-                    </button>
-                </div>
-                <div class="company-modal-warning">
-                    <i class="fas fa-info-circle" aria-hidden="true"></i>
-                    <span>Chú ý: Lựa chọn công ty không ảnh hưởng đến thống kê Tag.</span>
-                </div>
-            </div>
+    <div id="companyModal" class="modal-overlay" style="display: none">
+      <div class="modal-content glass-panel fade-in-up">
+        <div class="modal-header">
+          <h3>Chọn công ty</h3>
+          <button
+            id="closeCompanyModal"
+            class="close-modal-btn"
+            aria-label="Close modal"
+          >
+            ✕
+          </button>
         </div>
+        <div class="modal-body">
+          <div class="company-options-list">
+            <button
+              class="company-opt-btn active"
+              data-value="all"
+              type="button"
+            >
+              <i class="fas fa-globe" aria-hidden="true"></i>
+              <span>Tất cả công ty</span>
+            </button>
+            <button class="company-opt-btn" data-value="bonario" type="button">
+              <i class="fas fa-building" aria-hidden="true"></i>
+              <span>Bonario</span>
+            </button>
+            <button
+              class="company-opt-btn"
+              data-value="ordinaire"
+              type="button"
+            >
+              <i class="fas fa-building-user" aria-hidden="true"></i>
+              <span>Ordinaire</span>
+            </button>
+          </div>
+          <div class="company-modal-warning">
+            <i class="fas fa-info-circle" aria-hidden="true"></i>
+            <span
+              >Chú ý: Lựa chọn công ty không ảnh hưởng đến thống kê Tag.</span
+            >
+          </div>
+        </div>
+      </div>
     </div>
 
     <script type="module" src="app.js"></script>
-</body>
+  </body>
 </html>

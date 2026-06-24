@@ -119,3 +119,46 @@ export function isGPInInterval(gp_percent, intervalLabel) {
     return false;
 }
 
+export function showToast(message, type = 'success') {
+    let container = document.getElementById('toastContainer');
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'toastContainer';
+        container.style.cssText = 'position: fixed; bottom: 24px; right: 24px; z-index: 9999; display: flex; flex-direction: column; gap: 10px; pointer-events: none;';
+        document.body.appendChild(container);
+    }
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    toast.style.cssText = 'padding: 12px 20px; border-radius: 8px; color: white; font-weight: 500; font-size: 0.88rem; box-shadow: 0 4px 12px rgba(0,0,0,0.15); display: flex; align-items: center; gap: 8px; transform: translateY(20px); opacity: 0; transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1); pointer-events: auto; backdrop-filter: blur(8px);';
+    
+    let icon = '<i class="fas fa-check-circle"></i>';
+    let bg = 'rgba(16, 120, 80, 0.95)'; // var(--color-emerald)
+    if (type === 'error') {
+        icon = '<i class="fas fa-exclamation-circle"></i>';
+        bg = 'rgba(234, 88, 12, 0.95)'; // Terracotta
+    } else if (type === 'info') {
+        icon = '<i class="fas fa-info-circle"></i>';
+        bg = 'rgba(2, 132, 199, 0.95)'; // Slate Blue
+    }
+    
+    toast.style.backgroundColor = bg;
+    toast.innerHTML = `${icon}<span>${message}</span>`;
+    container.appendChild(toast);
+    
+    setTimeout(() => {
+        toast.style.transform = 'translateY(0)';
+        toast.style.opacity = '1';
+    }, 10);
+    
+    setTimeout(() => {
+        toast.style.transform = 'translateY(-20px)';
+        toast.style.opacity = '0';
+        setTimeout(() => {
+            toast.remove();
+            if (container.children.length === 0) {
+                container.remove();
+            }
+        }, 300);
+    }, 3500);
+}
+

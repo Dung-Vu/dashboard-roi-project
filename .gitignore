@@ -33,6 +33,7 @@ test_results.txt
 test_run.log
 *.log
 tests/debug_combined.js
+test_output.md
 
 # Data Files
 *.xlsx
