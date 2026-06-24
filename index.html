@@ -624,25 +624,47 @@
 
           <!-- Route 4: Xếp hạng & Biểu đồ -->
           <section id="ranks-route" class="route-view">
-            <div class="dashboard-grid" style="grid-template-columns: 60% 40%">
-              <div
-                class="section glass-panel"
-                style="margin-bottom: 0; padding: 25px"
-              >
-                <h2 class="section-title" style="margin-bottom: 1.25rem">
-                  <i class="fas fa-chart-bar" aria-hidden="true"></i>
-                  Phân bổ GP% theo nhóm Tag
-                </h2>
-                <div class="chart-container" style="height: 340px">
-                  <canvas
-                    id="gpChart"
-                    aria-label="Bieu do phan bo GP% theo nhom Tag"
-                  ></canvas>
+            <div class="dashboard-grid" style="grid-template-columns: 60% 40%;">
+              <!-- Left Column Wrapper -->
+              <div style="display: flex; flex-direction: column; gap: 2rem;">
+                <div
+                  class="section glass-panel"
+                  style="margin-bottom: 0; padding: 25px"
+                >
+                  <h2 class="section-title" style="margin-bottom: 1.25rem">
+                    <i class="fas fa-chart-bar" aria-hidden="true"></i>
+                    Phân bổ GP% theo nhóm Tag
+                  </h2>
+                  <div class="chart-container" style="height: 340px">
+                    <canvas
+                      id="gpChart"
+                      aria-label="Bieu do phan bo GP% theo nhom Tag"
+                    ></canvas>
+                  </div>
+                </div>
+
+                <!-- Monthly Shipping Cost Trend -->
+                <div
+                  class="section glass-panel"
+                  style="margin-bottom: 0; padding: 25px"
+                >
+                  <h2 class="section-title" style="margin-bottom: 1.25rem">
+                    <i class="fas fa-truck" aria-hidden="true"></i>
+                    Phân tích Xu hướng Chi phí vận chuyển theo tháng
+                  </h2>
+                  <div class="chart-container" style="height: 340px">
+                    <canvas
+                      id="monthlyShippingTrendChart"
+                      aria-label="Bieu do phan tich xu huong chi phi van chuyen theo thang"
+                    ></canvas>
+                  </div>
                 </div>
               </div>
+
+              <!-- Right Column -->
               <div
                 class="section glass-panel"
-                style="margin-bottom: 0; padding: 25px"
+                style="margin-bottom: 0; padding: 25px; display: flex; flex-direction: column; height: 100%; box-sizing: border-box;"
               >
                 <h2 class="section-title" style="margin-bottom: 1.25rem">
                   <i class="fas fa-chart-pie" aria-hidden="true"></i>
@@ -651,7 +673,8 @@
                 <div
                   class="chart-container"
                   style="
-                    height: 340px;
+                    flex-grow: 1;
+                    min-height: 340px;
                     display: flex;
                     justify-content: center;
                     align-items: center;
@@ -663,7 +686,7 @@
                     aria-label="Bieu do phan bo doanh thu theo nhom Tag"
                   ></canvas>
                 </div>
-                <div id="tagLeaderboard" class="leaderboard-list"></div>
+                <div id="tagLeaderboard" class="leaderboard-list" style="margin-top: 20px;"></div>
               </div>
             </div>
 
@@ -680,23 +703,6 @@
                 <canvas
                   id="monthlyTrendChart"
                   aria-label="Bieu do xu huong doanh thu va GP% theo thang"
-                ></canvas>
-              </div>
-            </div>
-
-            <!-- New Full-Width Row for Monthly Shipping Cost Trend -->
-            <div
-              class="section glass-panel"
-              style="margin-top: 2rem; padding: 25px"
-            >
-              <h2 class="section-title" style="margin-bottom: 1.25rem">
-                <i class="fas fa-truck" aria-hidden="true"></i>
-                Phân tích Xu hướng Chi phí vận chuyển theo tháng
-              </h2>
-              <div class="chart-container" style="height: 350px">
-                <canvas
-                  id="monthlyShippingTrendChart"
-                  aria-label="Bieu do phan tich xu huong chi phi van chuyen theo thang"
                 ></canvas>
               </div>
             </div>

@@ -150,9 +150,9 @@ class DashboardService:
                     limit=100000
                 )
                 move_line_ids = sorted({
-                    line["move_line_id"][0]
+                    relation_id(line.get("move_line_id"))
                     for line in analytic_lines
-                    if line.get("move_line_id")
+                    if relation_id(line.get("move_line_id"))
                 })
                 if move_line_ids:
                     # Batch fetch move lines
@@ -163,22 +163,40 @@ class DashboardService:
                         chunk_lines = self.client.search_read(
                             "account.move.line",
                             [["id", "in", chunk]],
-                            ["id", "analytic_distribution", "parent_state", "move_type", "balance"],
+                            ["id", "analytic_distribution", "parent_state", "move_type", "balance", "purchase_line_id"],
                             limit=len(chunk)
                         )
                         move_lines.extend(chunk_lines)
                     
                     move_line_map = {ml["id"]: ml for ml in move_lines}
+                    
+                    # Track processed move line IDs per analytic account to avoid double-counting
+                    processed_ml_per_account = defaultdict(set)
+                    
                     for line in analytic_lines:
                         ml_ref = line.get("move_line_id")
                         if not ml_ref:
                             continue
-                        ml = move_line_map.get(ml_ref[0])
+                        ml_id = relation_id(ml_ref)
+                        if not ml_id:
+                            continue
+                            
+                        ml = move_line_map.get(ml_id)
                         if not ml or ml.get("parent_state") != "posted":
                             continue
                         if ml.get("move_type") in {"out_invoice", "out_refund", "out_receipt"}:
                             continue
                         
+                        # Skip if linked to a purchase order line
+                        if ml.get("purchase_line_id"):
+                            continue
+                            
+                        acc_id = line["account_id"][0]
+                        
+                        # Avoid double-counting the same move line for the same account
+                        if ml_id in processed_ml_per_account[acc_id]:
+                            continue
+                            
                         dist = ml.get("analytic_distribution")
                         if not dist:
                             continue
@@ -198,7 +216,7 @@ class DashboardService:
                                 break
                         
                         if is_shipping:
-                            acc_id = line["account_id"][0]
+                            processed_ml_per_account[acc_id].add(ml_id)
                             balance = float(ml.get("balance") or 0)
                             shipping_cost_by_project[acc_id] = shipping_cost_by_project.get(acc_id, 0.0) + balance
             except Exception as e:
@@ -758,7 +776,14 @@ class DashboardService:
         account_id = relation_id(project.get("account_id"))
         shipping_cost = 0.0
         if shipping_cost_by_project and account_id in shipping_cost_by_project:
-            shipping_cost = shipping_cost_by_project[account_id]
+            raw_shipping = shipping_cost_by_project[account_id]
+            # Apply same bounding to total_expense_billed as in build_project_dashboard
+            expense_categories = {"expense", "expenses", "vendor_bill", "vendor_bills", "other"}
+            profit_items = profitability_costs.get("items", [])
+            expense_items = [it for it in profit_items if it.get("id") in expense_categories]
+            total_expense_billed = sum(as_decimal(it["billed"]) for it in expense_items)
+            
+            shipping_cost = as_money(min(Decimal(str(raw_shipping)), total_expense_billed))
 
         return {
             "project_id": project["id"],
