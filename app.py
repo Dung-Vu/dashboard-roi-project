@@ -86,9 +86,16 @@ def create_app() -> Flask:
     service = DashboardService(client)
 
     app = Flask(__name__)
+    from werkzeug.middleware.proxy_fix import ProxyFix
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)
+
     app.secret_key = settings.secret_key
+    
+    import os
+    session_secure = not settings.debug or os.getenv("FLASK_ENV") == "production"
+    
     app.config.update(
-        SESSION_COOKIE_SECURE=False,
+        SESSION_COOKIE_SECURE=session_secure,
         SESSION_COOKIE_HTTPONLY=True,
         SESSION_COOKIE_SAMESITE="Lax"
     )

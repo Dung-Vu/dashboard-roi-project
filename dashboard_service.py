@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import time
 import threading
@@ -20,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 TWO_DECIMALS = Decimal("0.01")
-PROJECTS_DASHBOARD_TTL_SECONDS = 3600  # 1 hour
+PROJECTS_DASHBOARD_TTL_SECONDS = 86400  # 24 hours
 PROJECTS_DASHBOARD_MAX_WORKERS = 8
 DASHBOARD_TARGET_TAGS = ("Nội thất rời", "Giấy dán tường", "Rèm", "Vải nội thất")
 EXCLUDED_SALESPERSONS = ("CEO office", "Đỗ Thị Hải Yến", "CEO office, Đỗ Thị Hải Yến")
@@ -60,6 +61,19 @@ COMPANY_SCOPES = {
     "ordinaire": {"label": "Ordinaire", "aliases": ("ordinaire",)},
 }
 
+SHIPPING_ANALYTIC_ACCOUNT_IDS_FALLBACK = frozenset({
+    1519,  # SC - Logistics OPS (Bonario SC)
+    1518,  # SC - Logistics SO (Bonario SC)
+    1271,  # SC - Rush logistics - Ship gấp (Bonario SC)
+    566,   # SC_Shipping (CLT, demo...) (Bonario SC)
+    1522,  # [ORD] SC - Logistics OPS (Ordinaire SC)
+    1523,  # [ORD] SC - Logistics SO (Ordinaire SC)
+    1270,  # [ORD] SC - Rush logistics - Ship gấp (Ordinaire SC)
+    1239,  # [ORD] SC_Shipping (CLT, demo...) (Ordinaire SC)
+})
+SHIPPING_ACCOUNT_NAME_KEYWORDS = ("logistics", "ship", "vận chuyển", "shipping")
+SHIPPING_ACCOUNT_REFRESH_SECONDS = 86400
+
 
 def as_decimal(value: Any) -> Decimal:
     return Decimal(str(value or 0))
@@ -98,9 +112,160 @@ class DashboardService:
         self._active_updates: set[str] = set()
         self._active_updates_lock = Lock()
         self._warmer_stop_event = threading.Event()
+        self._shipping_account_ids: set[int] | None = None
+        self._shipping_account_ids_lock = Lock()
+        self._shipping_account_ids_refresh_at: float = 0.0
 
     def test_connection(self) -> dict[str, Any]:
         return self.client.test_connection()
+
+    def _get_shipping_account_ids(self) -> set[int]:
+        now = time.time()
+        with self._shipping_account_ids_lock:
+            if (
+                self._shipping_account_ids is not None
+                and now < self._shipping_account_ids_refresh_at
+            ):
+                return self._shipping_account_ids
+            ids = set(SHIPPING_ANALYTIC_ACCOUNT_IDS_FALLBACK)
+            try:
+                accounts = self.client.search_read(
+                    "account.analytic.account",
+                    [
+                        ("plan_id.name", "ilike", "SC"),
+                        "|", "|",
+                        ("name", "ilike", "logistics"),
+                        ("name", "ilike", "ship"),
+                        ("name", "ilike", "vận chuyển"),
+                    ],
+                    ["id", "name", "plan_id"],
+                    limit=500,
+                )
+                for acc in accounts:
+                    name = (acc.get("name") or "").lower()
+                    if any(kw in name for kw in SHIPPING_ACCOUNT_NAME_KEYWORDS):
+                        ids.add(int(acc["id"]))
+            except Exception as e:
+                logger.warning(
+                    f"Failed to discover shipping analytic accounts from Odoo: {e}. "
+                    f"Using hardcoded fallback: {sorted(SHIPPING_ANALYTIC_ACCOUNT_IDS_FALLBACK)}"
+                )
+            self._shipping_account_ids = ids
+            self._shipping_account_ids_refresh_at = now + SHIPPING_ACCOUNT_REFRESH_SECONDS
+            logger.debug(f"Shipping analytic account IDs: {sorted(ids)}")
+            return ids
+
+    def _is_shipping_distribution(self, dist: Any) -> bool:
+        if not dist:
+            return False
+        if isinstance(dist, str):
+            try:
+                dist = json.loads(dist)
+            except Exception:
+                return False
+        if not isinstance(dist, dict):
+            return False
+        shipping_ids = self._get_shipping_account_ids()
+        for key in dist.keys():
+            for part in str(key).split(","):
+                part = part.strip()
+                if not part:
+                    continue
+                try:
+                    if int(part) in shipping_ids:
+                        return True
+                except ValueError:
+                    continue
+        return False
+
+    def _fetch_shipping_costs(self, account_ids: list[int]) -> tuple[dict[int, float], dict[int, dict[str, float]]]:
+        shipping_cost_by_project = {}
+        shipping_cost_by_project_and_month = defaultdict(lambda: defaultdict(float))
+        if not account_ids:
+            return shipping_cost_by_project, {}
+
+        # Resolve whitelist of shipping-related analytic account IDs once per fetch.
+        shipping_ids = self._get_shipping_account_ids()
+        logger.debug(f"_fetch_shipping_costs whitelist = {sorted(shipping_ids)}")
+
+        try:
+            # Fetch analytic lines for these accounts
+            analytic_lines = self.client.search_read(
+                "account.analytic.line",
+                [["account_id", "in", account_ids], ["category", "!=", "invoice"]],
+                ["id", "amount", "account_id", "move_line_id"],
+                limit=100000
+            )
+            move_line_ids = sorted({
+                relation_id(line.get("move_line_id"))
+                for line in analytic_lines
+                if relation_id(line.get("move_line_id"))
+            })
+            if move_line_ids:
+                # Batch fetch move lines
+                move_lines = []
+                chunk_size = 500
+                for i in range(0, len(move_line_ids), chunk_size):
+                    chunk = move_line_ids[i:i+chunk_size]
+                    chunk_lines = self.client.search_read(
+                        "account.move.line",
+                        [["id", "in", chunk]],
+                        ["id", "analytic_distribution", "parent_state", "move_type", "balance", "purchase_line_id", "date"],
+                        limit=len(chunk)
+                    )
+                    move_lines.extend(chunk_lines)
+
+                move_line_map = {ml["id"]: ml for ml in move_lines}
+
+                # Track processed move line IDs per analytic account to avoid double-counting
+                processed_ml_per_account = defaultdict(set)
+
+                for line in analytic_lines:
+                    ml_ref = line.get("move_line_id")
+                    if not ml_ref:
+                        continue
+                    ml_id = relation_id(ml_ref)
+                    if not ml_id:
+                        continue
+
+                    ml = move_line_map.get(ml_id)
+                    if not ml or ml.get("parent_state") != "posted":
+                        continue
+                    if ml.get("move_type") in {"out_invoice", "out_refund", "out_receipt"}:
+                        continue
+
+                    # Skip if linked to a purchase order line: those costs flow through COGS
+                    # / cost_of_goods_sold bucket in Odoo profitability panel, not shipping.
+                    if ml.get("purchase_line_id"):
+                        continue
+
+                    acc_id = line["account_id"][0]
+
+                    # Avoid double-counting the same move line for the same account
+                    if ml_id in processed_ml_per_account[acc_id]:
+                        continue
+
+                    dist = ml.get("analytic_distribution")
+                    if not self._is_shipping_distribution(dist):
+                        continue
+
+                    processed_ml_per_account[acc_id].add(ml_id)
+                    balance = float(ml.get("balance") or 0)
+                    shipping_cost_by_project[acc_id] = shipping_cost_by_project.get(acc_id, 0.0) + balance
+
+                    ml_date = ml.get("date")
+                    if ml_date and len(ml_date) >= 7:
+                        yyyy_mm = ml_date[:7]
+                        shipping_cost_by_project_and_month[acc_id][yyyy_mm] += balance
+        except Exception as e:
+            logger.error(f"Error precalculating shipping costs in dashboard fetch: {e}", exc_info=True)
+
+        # Convert defaultdict of defaultdict to standard dict of dicts for serialization
+        standardized_by_month = {}
+        for acc_id, months in shipping_cost_by_project_and_month.items():
+            standardized_by_month[acc_id] = dict(months)
+
+        return shipping_cost_by_project, standardized_by_month
 
     def _fetch_projects_dashboard_from_odoo(self, date_from: str, company_key: str) -> dict[str, Any]:
         sale_orders = self._get_dashboard_sale_orders(date_from, company_key)
@@ -137,90 +302,8 @@ class DashboardService:
         analytic_adjustments = self._build_dashboard_analytic_adjustments(projects, sale_orders_by_id)
 
         # Precalculate shipping costs map for the projects
-        shipping_cost_by_project = {}
         account_ids = sorted(set(relation_id(p.get("account_id")) for p in projects if relation_id(p.get("account_id"))))
-        if account_ids:
-            try:
-                import json
-                # Fetch analytic lines for these accounts
-                analytic_lines = self.client.search_read(
-                    "account.analytic.line",
-                    [["account_id", "in", account_ids], ["category", "!=", "invoice"]],
-                    ["id", "amount", "account_id", "move_line_id"],
-                    limit=100000
-                )
-                move_line_ids = sorted({
-                    relation_id(line.get("move_line_id"))
-                    for line in analytic_lines
-                    if relation_id(line.get("move_line_id"))
-                })
-                if move_line_ids:
-                    # Batch fetch move lines
-                    move_lines = []
-                    chunk_size = 500
-                    for i in range(0, len(move_line_ids), chunk_size):
-                        chunk = move_line_ids[i:i+chunk_size]
-                        chunk_lines = self.client.search_read(
-                            "account.move.line",
-                            [["id", "in", chunk]],
-                            ["id", "analytic_distribution", "parent_state", "move_type", "balance", "purchase_line_id"],
-                            limit=len(chunk)
-                        )
-                        move_lines.extend(chunk_lines)
-                    
-                    move_line_map = {ml["id"]: ml for ml in move_lines}
-                    
-                    # Track processed move line IDs per analytic account to avoid double-counting
-                    processed_ml_per_account = defaultdict(set)
-                    
-                    for line in analytic_lines:
-                        ml_ref = line.get("move_line_id")
-                        if not ml_ref:
-                            continue
-                        ml_id = relation_id(ml_ref)
-                        if not ml_id:
-                            continue
-                            
-                        ml = move_line_map.get(ml_id)
-                        if not ml or ml.get("parent_state") != "posted":
-                            continue
-                        if ml.get("move_type") in {"out_invoice", "out_refund", "out_receipt"}:
-                            continue
-                        
-                        # Skip if linked to a purchase order line
-                        if ml.get("purchase_line_id"):
-                            continue
-                            
-                        acc_id = line["account_id"][0]
-                        
-                        # Avoid double-counting the same move line for the same account
-                        if ml_id in processed_ml_per_account[acc_id]:
-                            continue
-                            
-                        dist = ml.get("analytic_distribution")
-                        if not dist:
-                            continue
-                        if isinstance(dist, str):
-                            try:
-                                dist = json.loads(dist)
-                            except Exception:
-                                pass
-                        if not isinstance(dist, dict):
-                            continue
-                        
-                        is_shipping = False
-                        for key in dist.keys():
-                            parts = [p.strip() for p in key.split(",")]
-                            if "1519" in parts or "1271" in parts:
-                                is_shipping = True
-                                break
-                        
-                        if is_shipping:
-                            processed_ml_per_account[acc_id].add(ml_id)
-                            balance = float(ml.get("balance") or 0)
-                            shipping_cost_by_project[acc_id] = shipping_cost_by_project.get(acc_id, 0.0) + balance
-            except Exception as e:
-                logger.error(f"Error precalculating shipping costs in dashboard fetch: {e}", exc_info=True)
+        shipping_cost_by_project, shipping_cost_by_project_and_month = self._fetch_shipping_costs(account_ids)
 
         rows: list[dict[str, Any]] = []
         if projects:
@@ -238,6 +321,7 @@ class DashboardService:
                         tag_map,
                         analytic_adjustments,
                         shipping_cost_by_project,
+                        shipping_cost_by_project_and_month,
                     )
                     for project in projects
                 ]
@@ -321,16 +405,14 @@ class DashboardService:
         cache_key = f"{company_key}:{date_from}"
         db_cache_key = f"dashboard_payload:{company_key}:{date_from}"
 
-        # If refresh=True: clear caches, fetch synchronously from Odoo, cache, and return
+        # If refresh=True: fetch synchronously from Odoo, cache (overwriting existing), and return
         if refresh:
-            self._db_cache.clear("profitability:")
-            self._db_cache.clear(db_cache_key)
-            with self._cache_lock:
-                self._projects_dashboard_cache.pop(cache_key, None)
-            
-            logger.info(f"Forced refresh: cleared caches for {cache_key}")
+            logger.info(f"Forced refresh: fetching synchronously from Odoo for {cache_key}...")
             payload = self._fetch_projects_dashboard_from_odoo(date_from, company_key)
             payload["cached_at"] = time.time()
+            
+            # Clear old profitability detail caches since we are doing a forced refresh
+            self._db_cache.clear("profitability:")
             
             self._db_cache.set(db_cache_key, payload)
             with self._cache_lock:
@@ -346,7 +428,7 @@ class DashboardService:
                 if age < 300:  # Fresh memory cache (< 5 minutes)
                     logger.debug(f"Memory cache hit (fresh, age: {age:.1f}s) for {cache_key}")
                     return cached[1]
-                elif age < PROJECTS_DASHBOARD_TTL_SECONDS:  # Stale memory cache (< 1 hour): revalidate
+                elif age < PROJECTS_DASHBOARD_TTL_SECONDS:  # Stale memory cache (< 24 hours): revalidate
                     logger.info(f"Memory cache hit but stale (age: {age:.1f}s) for {cache_key}. Triggering revalidation.")
                     with self._active_updates_lock:
                         if cache_key not in self._active_updates:
@@ -375,8 +457,8 @@ class DashboardService:
                     logger.info(f"SQLite cache hit & fresh (age: {age:.1f}s) for {cache_key}")
                     return db_cached
                 
-                # If stale but within 1 hour, return stale instantly and trigger background revalidation
-                if age < 3600:
+                # If stale but within 24 hours, return stale instantly and trigger background revalidation
+                if age < PROJECTS_DASHBOARD_TTL_SECONDS:
                     logger.info(f"SQLite cache hit but stale (age: {age:.1f}s) for {cache_key}. Triggering revalidation.")
                     with self._active_updates_lock:
                         if cache_key not in self._active_updates:
@@ -389,8 +471,8 @@ class DashboardService:
                             t.start()
                     return db_cached
                 
-                # If older than 1 hour, do not return stale cache. Fall through to fetch synchronously!
-                logger.info(f"SQLite cache is too stale (age: {age:.1f}s, > 1 hour) for {cache_key}. Fetching synchronously from Odoo.")
+                # If older than 24 hours, do not return stale cache. Fall through to fetch synchronously!
+                logger.info(f"SQLite cache is too stale (age: {age:.1f}s, > 24 hours) for {cache_key}. Fetching synchronously from Odoo.")
 
         # 3. SQLite cache miss: fetch synchronously from Odoo
         logger.info(f"SQLite cache miss for {cache_key}. Fetching synchronously from Odoo.")
@@ -514,7 +596,10 @@ class DashboardService:
                         if res:
                             sale_orders.extend(res)
                     except Exception as e:
-                        logger.error(f"Failed to fetch sale orders for company {comp_identifier}: {e}")
+                        if "Access to unauthorized or invalid companies" in str(e):
+                            logger.debug(f"Skipping unauthorized company {comp_identifier} (no access permissions)")
+                        else:
+                            logger.error(f"Failed to fetch sale orders for company {comp_identifier}: {e}")
 
         # Deduplicate all fetched sale orders by id
         seen_ids = set()
@@ -739,6 +824,7 @@ class DashboardService:
         tag_map: dict[int, list[str]],
         analytic_adjustments: dict[int, dict[str, Any]],
         shipping_cost_by_project: dict[int, float] | None = None,
+        shipping_cost_by_project_and_month: dict[int, dict[str, float]] | None = None,
     ) -> dict[str, Any]:
         sale_order_id = relation_id(project.get("sale_order_id"))
         sale_order = sale_orders_by_id.get(sale_order_id or 0, {})
@@ -776,14 +862,14 @@ class DashboardService:
         account_id = relation_id(project.get("account_id"))
         shipping_cost = 0.0
         if shipping_cost_by_project and account_id in shipping_cost_by_project:
-            raw_shipping = shipping_cost_by_project[account_id]
-            # Apply same bounding to total_expense_billed as in build_project_dashboard
-            expense_categories = {"expense", "expenses", "vendor_bill", "vendor_bills", "other"}
-            profit_items = profitability_costs.get("items", [])
-            expense_items = [it for it in profit_items if it.get("id") in expense_categories]
-            total_expense_billed = sum(as_decimal(it["billed"]) for it in expense_items)
-            
-            shipping_cost = as_money(min(Decimal(str(raw_shipping)), total_expense_billed))
+            shipping_cost = as_money(Decimal(str(shipping_cost_by_project[account_id])))
+
+        shipping_cost_by_month = {}
+        if shipping_cost_by_project_and_month and account_id in shipping_cost_by_project_and_month:
+            shipping_cost_by_month = {
+                month: as_money(Decimal(str(cost)))
+                for month, cost in shipping_cost_by_project_and_month[account_id].items()
+            }
 
         return {
             "project_id": project["id"],
@@ -806,6 +892,7 @@ class DashboardService:
             "cost_added_amount": as_money(foreign_cost_added),
             "cost_breakdown": cost_breakdown_items,
             "shipping_cost": shipping_cost,
+            "shipping_cost_by_month": shipping_cost_by_month,
             "gp_amount": as_money(gp_amount),
             "gp_percent": gp_percent,
         }
@@ -1105,39 +1192,22 @@ class DashboardService:
             is_po = source.get("purchase_line_id") is not None or source.get("source") == "po_open_commitment"
             if is_po:
                 continue
-                
+
             dist = source.get("analytic_distribution")
-            if not dist:
+            if not self._is_shipping_distribution(dist):
                 continue
-                
-            if isinstance(dist, str):
-                try:
-                    dist = json.loads(dist)
-                except Exception:
-                    pass
-                    
-            is_shipping = False
-            if isinstance(dist, dict):
-                for key in dist.keys():
-                    parts = [p.strip() for p in key.split(",")]
-                    if "1519" in parts or "1271" in parts:
-                        is_shipping = True
-                        break
-            
-            if is_shipping:
-                amount = as_decimal(source.get("amount") or 0)
-                if source.get("source") == "posted_actual_cost":
-                    shipping_billed += amount
-                else:
-                    shipping_commit += amount
-                    
-        # Bounding
-        shipping_billed = min(shipping_billed, total_expense_billed)
-        shipping_commit = min(shipping_commit, total_expense_commit)
+
+            amount = as_decimal(source.get("amount") or 0)
+            if source.get("source") == "posted_actual_cost":
+                shipping_billed += amount
+            else:
+                shipping_commit += amount
+
+        # Bounding removed to show actual shipping costs from move lines
         shipping_expected = shipping_billed + shipping_commit
         
-        other_billed = total_expense_billed - shipping_billed
-        other_commit = total_expense_commit - shipping_commit
+        other_billed = max(Decimal("0"), total_expense_billed - shipping_billed)
+        other_commit = max(Decimal("0"), total_expense_commit - shipping_commit)
         other_expected = other_billed + other_commit
         
         custom_breakdown = []
@@ -2636,58 +2706,80 @@ class DashboardService:
                         payload["meta"] = self._build_projects_dashboard_meta(filtered_rows, filtered_done_rows, d_from, c_key)
                         
         db_path = self._db_cache.db_path
-        with self._db_cache._lock:
+        import json
+        import sqlite3
+        
+        db_rows = []
+        try:
+            conn = sqlite3.connect(str(db_path), timeout=30.0)
+            db_rows = conn.execute("SELECT key, value, created_at FROM cache WHERE key LIKE 'dashboard_payload:%'").fetchall()
+            conn.close()
+        except Exception as e:
+            logger.error(f"Failed to query SQLite cache keys for project {project_id}: {e}")
+            db_rows = []
+
+        updates_to_write = []
+        for key, value_json, created_at in db_rows:
             try:
-                import json
-                import sqlite3
-                conn = sqlite3.connect(str(db_path), timeout=30.0)
-                db_rows = conn.execute("SELECT key, value, created_at FROM cache WHERE key LIKE 'dashboard_payload:%'").fetchall()
-                for key, value_json, created_at in db_rows:
-                    payload = json.loads(value_json)
-                    updated = False
-                    if "projects" in payload:
-                        for p in payload["projects"]:
-                            if p["project_id"] == project_id:
-                                p.update(updates)
-                                updated = True
-                                break
-                        if not updated and "project_name" in updates:
-                            parts = key.split(":")
-                            if len(parts) == 3:
-                                c_key = parts[1]
-                                d_from = parts[2]
-                                comp_match = (c_key == "all" or 
-                                              not updates.get("company_key") or 
-                                              updates.get("company_key") == c_key)
-                                date_match = (not updates.get("date_order") or 
-                                              updates.get("date_order") >= d_from)
-                                if comp_match and date_match:
-                                    payload["projects"].append(updates)
-                                    updated = True
-                    if updated:
-                        # Recalculate aggregates for SQLite payload
-                        project_rows = payload.get("projects", [])
-                        parts = key.split(":")
+                payload = json.loads(value_json)
+            except Exception as e:
+                logger.error(f"Failed to parse JSON for key {key}: {e}")
+                continue
+                
+            updated = False
+            if "projects" in payload:
+                for p in payload["projects"]:
+                    if p["project_id"] == project_id:
+                        p.update(updates)
+                        updated = True
+                        break
+                if not updated and "project_name" in updates:
+                    parts = key.split(":")
+                    if len(parts) == 3:
                         c_key = parts[1]
                         d_from = parts[2]
-                        
-                        filtered_rows = [row for row in project_rows if c_key == "all" or not row.get("company_key") or row.get("company_key") == c_key]
-                        filtered_done_rows = [row for row in filtered_rows if row.get("order_state") == "Done"]
-                        done_rows = [row for row in project_rows if row.get("order_state") == "Done"]
-                        
-                        payload["summary"] = self._build_projects_dashboard_summary(filtered_done_rows)
-                        payload["tag_buckets"] = self._build_tag_buckets(done_rows)
-                        payload["tag_gp_ranks"] = self._build_tag_gp_ranks(done_rows)
-                        payload["meta"] = self._build_projects_dashboard_meta(filtered_rows, filtered_done_rows, d_from, c_key)
-                        
+                        comp_match = (c_key == "all" or 
+                                      not updates.get("company_key") or 
+                                      updates.get("company_key") == c_key)
+                        date_match = (not updates.get("date_order") or 
+                                      updates.get("date_order") >= d_from)
+                        if comp_match and date_match:
+                            payload["projects"].append(updates)
+                            updated = True
+            if updated:
+                try:
+                    # Recalculate aggregates for SQLite payload
+                    project_rows = payload.get("projects", [])
+                    parts = key.split(":")
+                    c_key = parts[1]
+                    d_from = parts[2]
+                    
+                    filtered_rows = [row for row in project_rows if c_key == "all" or not row.get("company_key") or row.get("company_key") == c_key]
+                    filtered_done_rows = [row for row in filtered_rows if row.get("order_state") == "Done"]
+                    done_rows = [row for row in project_rows if row.get("order_state") == "Done"]
+                    
+                    payload["summary"] = self._build_projects_dashboard_summary(filtered_done_rows)
+                    payload["tag_buckets"] = self._build_tag_buckets(done_rows)
+                    payload["tag_gp_ranks"] = self._build_tag_gp_ranks(done_rows)
+                    payload["meta"] = self._build_projects_dashboard_meta(filtered_rows, filtered_done_rows, d_from, c_key)
+                    
+                    updates_to_write.append((key, json.dumps(payload), created_at))
+                except Exception as e:
+                    logger.error(f"Failed to recalculate aggregates for key {key}: {e}")
+
+        if updates_to_write:
+            with self._db_cache._lock:
+                try:
+                    conn = sqlite3.connect(str(db_path), timeout=30.0)
+                    for key, val_str, created_at in updates_to_write:
                         conn.execute(
                             "INSERT OR REPLACE INTO cache (key, value, created_at) VALUES (?, ?, ?)",
-                            (key, json.dumps(payload), created_at)
+                            (key, val_str, created_at)
                         )
-                conn.commit()
-                conn.close()
-            except Exception as e:
-                logger.error(f"Failed to update SQLite cache for project {project_id}: {e}")
+                    conn.commit()
+                    conn.close()
+                except Exception as e:
+                    logger.error(f"Failed to update SQLite cache for project {project_id}: {e}")
 
     def _rebuild_dashboard_aggregates(self, date_from: str, company_key: str) -> dict[str, Any]:
         """Tái cấu trúc và tính toán lại summary, tag_buckets, tag_gp_ranks từ cache hiện tại."""
@@ -2816,6 +2908,10 @@ class DashboardService:
             tag_map = self._get_sale_order_tag_map(sale_orders)
             analytic_adjustments = self._build_dashboard_analytic_adjustments(projects, sale_orders_by_id)
             
+            # Precalculate shipping costs map for the projects
+            account_ids = sorted(set(relation_id(p.get("account_id")) for p in projects if relation_id(p.get("account_id"))))
+            shipping_cost_by_project, shipping_cost_by_project_and_month = self._fetch_shipping_costs(account_ids)
+            
             updated_rows = []
             for p in projects:
                 try:
@@ -2824,6 +2920,8 @@ class DashboardService:
                         sale_orders_by_id,
                         tag_map,
                         analytic_adjustments,
+                        shipping_cost_by_project,
+                        shipping_cost_by_project_and_month,
                     )
                     updated_rows.append(row)
                     self.update_project_in_all_caches(p["id"], row)
@@ -2863,9 +2961,29 @@ class DashboardService:
                 return
             while not self._warmer_stop_event.is_set():
                 try:
-                    logger.info("Proactive Cache Warmer: Starting background refresh...")
-                    self.build_projects_dashboard(date_from="2026-01-01", company="all", refresh=True)
-                    logger.info("Proactive Cache Warmer: Refresh completed successfully.")
+                    import time
+                    now = time.time()
+                    last_run_data = self._db_cache.get("warmer_last_run")
+                    
+                    should_run = True
+                    if last_run_data and isinstance(last_run_data, dict):
+                        last_ts = last_run_data.get("timestamp")
+                        if last_ts and (now - last_ts < interval_seconds):
+                            should_run = False
+                            logger.info(f"Proactive Cache Warmer: Skipped. Last run was {now - last_ts:.1f}s ago, interval is {interval_seconds}s.")
+                            
+                    if should_run:
+                        # Try to acquire warmer lock for 300 seconds
+                        if self._db_cache.acquire_warmer_lock("warmer_lock", 300):
+                            try:
+                                logger.info("Proactive Cache Warmer: Lock acquired. Starting background refresh...")
+                                self.build_projects_dashboard(date_from="2026-01-01", company="all", refresh=True)
+                                self._db_cache.set("warmer_last_run", {"timestamp": time.time()})
+                                logger.info("Proactive Cache Warmer: Refresh completed successfully.")
+                            finally:
+                                self._db_cache.release_warmer_lock("warmer_lock")
+                        else:
+                            logger.info("Proactive Cache Warmer: Skipped. Warmer lock is currently held by another process.")
                 except Exception as e:
                     logger.error(f"Proactive Cache Warmer Error: {e}", exc_info=True)
                 

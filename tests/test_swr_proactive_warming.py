@@ -99,7 +99,7 @@ class TestSWRAndProactiveWarming(unittest.TestCase):
         mock_payload = {
             "projects": [],
             "summary": {"total_projects": 0},
-            "cached_at": time.time() - 4000, # More than 1 hour old (Hard stale)
+            "cached_at": time.time() - 90000, # More than 24 hours old (Hard stale)
         }
         
         self.service._db_cache.set(db_cache_key, mock_payload)

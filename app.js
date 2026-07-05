@@ -18,6 +18,71 @@ import {
 import { DEFAULT_COMPANY, DEFAULT_DATE_FROM, ITEMS_PER_PAGE, UI_STATE_KEY } from './assets/js/config.js';
 
 // ===== SPA Router =====
+function focusProjectInTable(projectId) {
+    const projIdNum = parseInt(projectId, 10);
+    if (isNaN(projIdNum)) return;
+
+    // 1. Close the shipping detail modal if open
+    const shippingDetailModal = document.getElementById('shippingDetailModal');
+    if (shippingDetailModal) {
+        shippingDetailModal.style.display = 'none';
+    }
+
+    // 2. Reset filters to make sure the project is visible
+    const searchInput = document.getElementById('searchInput');
+    const tagFilter = document.getElementById('tagFilter');
+    const stateFilter = document.getElementById('stateFilter');
+    const healthFilter = document.getElementById('healthFilter');
+
+    if (searchInput) searchInput.value = '';
+    if (tagFilter) tagFilter.value = '';
+    if (stateFilter) stateFilter.value = '';
+    if (healthFilter) healthFilter.value = '';
+
+    state.gpRangeFilter = null;
+    state.revenueTierFilter = null;
+    document.querySelectorAll('.gp-filter-btn').forEach(btn => btn.classList.remove('active'));
+    document.querySelectorAll('.tier-filter-btn').forEach(btn => btn.classList.remove('active'));
+
+    // 3. Re-apply filters to refresh state.filteredProjects
+    applyFilters();
+
+    // 4. Find the project in the filtered list
+    const index = state.filteredProjects.findIndex(p => p.project_id === projIdNum);
+    if (index !== -1) {
+        // Go to the correct page
+        const page = Math.floor(index / ITEMS_PER_PAGE) + 1;
+        state.currentPage = page;
+        renderProjectsTable(state.filteredProjects);
+
+        // 5. Highlight and expand row
+        setTimeout(() => {
+            const row = document.querySelector(`.cost-expand-btn[data-project-id="${projIdNum}"]`)?.closest('tr');
+            if (row) {
+                row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                row.style.transition = 'background-color 0.5s';
+                row.style.backgroundColor = 'rgba(16, 120, 80, 0.15)';
+                setTimeout(() => {
+                    row.style.backgroundColor = '';
+                }, 3000);
+
+                const breakdownRow = document.querySelector(`tr[data-breakdown-for="${projIdNum}"]`);
+                const expandBtn = row.querySelector('.cost-expand-btn');
+                if (breakdownRow && expandBtn) {
+                    const isVisible = breakdownRow.style.display !== 'none';
+                    if (!isVisible) {
+                        breakdownRow.style.display = 'table-row';
+                        const icon = expandBtn.querySelector('i');
+                        if (icon) icon.style.transform = 'rotate(90deg)';
+                        expandBtn.style.background = 'rgba(16, 120, 80, 0.1)';
+                        fetchAndRenderCostDetails(projIdNum);
+                    }
+                }
+            }
+        }, 150);
+    }
+}
+
 function handleRouting() {
     const hash = location.hash || '#/overview';
     const routeMap = {
@@ -27,12 +92,22 @@ function handleRouting() {
         '#/ranks': 'ranks-route'
     };
 
-    if (location.hash && !routeMap[location.hash]) {
+    let matchedRoute = routeMap[hash];
+    let projectId = null;
+
+    if (!matchedRoute && hash.startsWith('#/project/')) {
+        projectId = parseInt(hash.replace('#/project/', ''), 10);
+        if (!isNaN(projectId)) {
+            matchedRoute = 'projects-route';
+        }
+    }
+
+    if (location.hash && !matchedRoute) {
         location.hash = '#/overview';
         return;
     }
 
-    const activeSectionId = routeMap[hash] || 'overview-route';
+    const activeSectionId = matchedRoute || 'overview-route';
 
     document.querySelectorAll('.route-view').forEach(view => {
         view.classList.remove('active');
@@ -45,45 +120,41 @@ function handleRouting() {
 
     document.querySelectorAll('.sidebar-menu .menu-item').forEach(item => {
         const href = item.getAttribute('href');
-        if (href === hash || (hash === '#/overview' && href === '#/overview')) {
+        if (href === hash || (hash === '#/overview' && href === '#/overview') || (projectId && href === '#/projects')) {
             item.classList.add('active');
         } else {
             item.classList.remove('active');
         }
     });
 
-    if (hash !== '#/ranks') {
-        if (state.gpChart) {
-            state.gpChart.destroy();
-            state.gpChart = null;
-        }
-        if (state.revenueDoughnutChart) {
-            state.revenueDoughnutChart.destroy();
-            state.revenueDoughnutChart = null;
-        }
-        if (state.monthlyTrendChart) {
-            state.monthlyTrendChart.destroy();
-            state.monthlyTrendChart = null;
-        }
-        if (state.monthlyShippingTrendChart) {
-            state.monthlyShippingTrendChart.destroy();
-            state.monthlyShippingTrendChart = null;
-        }
+    // Systematically destroy all Chart.js instances on any hash routing change
+    if (state.gpChart) {
+        state.gpChart.destroy();
+        state.gpChart = null;
     }
-
-    if (hash !== '#/tags') {
-        if (state.stackedRevenueChart) {
-            state.stackedRevenueChart.destroy();
-            state.stackedRevenueChart = null;
-        }
-        if (state.tagCharts) {
-            Object.keys(state.tagCharts).forEach(tag => {
-                if (state.tagCharts[tag]) {
-                    state.tagCharts[tag].destroy();
-                }
-            });
-            state.tagCharts = null;
-        }
+    if (state.revenueDoughnutChart) {
+        state.revenueDoughnutChart.destroy();
+        state.revenueDoughnutChart = null;
+    }
+    if (state.monthlyTrendChart) {
+        state.monthlyTrendChart.destroy();
+        state.monthlyTrendChart = null;
+    }
+    if (state.monthlyShippingTrendChart) {
+        state.monthlyShippingTrendChart.destroy();
+        state.monthlyShippingTrendChart = null;
+    }
+    if (state.stackedRevenueChart) {
+        state.stackedRevenueChart.destroy();
+        state.stackedRevenueChart = null;
+    }
+    if (state.tagCharts) {
+        Object.keys(state.tagCharts).forEach(tag => {
+            if (state.tagCharts[tag]) {
+                state.tagCharts[tag].destroy();
+            }
+        });
+        state.tagCharts = null;
     }
 
     if (hash === '#/tags' && state.dashboardData) {
@@ -112,6 +183,10 @@ function handleRouting() {
             state.monthlyShippingTrendChart.resize();
         }
         renderTagLeaderboard(state.dashboardData.tag_buckets);
+    }
+
+    if (projectId && state.dashboardData) {
+        focusProjectInTable(projectId);
     }
 
     updateMenuIndicator();
@@ -571,6 +646,29 @@ document.addEventListener('DOMContentLoaded', async () => {
     const companyModal = document.getElementById('companyModal');
     const companySelectTrigger = document.getElementById('companySelectTrigger');
     const closeCompanyModal = document.getElementById('closeCompanyModal');
+
+    // Shipping Detail Modal Controllers
+    const shippingDetailModal = document.getElementById('shippingDetailModal');
+    const closeShippingDetailModal = document.getElementById('closeShippingDetailModal');
+
+    closeShippingDetailModal?.addEventListener('click', () => {
+        if (shippingDetailModal) {
+            shippingDetailModal.style.display = 'none';
+        }
+    });
+
+    shippingDetailModal?.addEventListener('click', (event) => {
+        if (event.target === shippingDetailModal) {
+            shippingDetailModal.style.display = 'none';
+        }
+    });
+
+    document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') {
+            if (companyModal) companyModal.style.display = 'none';
+            if (shippingDetailModal) shippingDetailModal.style.display = 'none';
+        }
+    });
 
     // 1. Open the Company Selection Modal
     companySelectTrigger?.addEventListener('click', () => {

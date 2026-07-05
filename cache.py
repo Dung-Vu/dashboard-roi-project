@@ -35,6 +35,12 @@ class PersistentCache:
                     )
                 """)
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_created_at ON cache(created_at)")
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS locks (
+                        key TEXT PRIMARY KEY,
+                        expires_at REAL NOT NULL
+                    )
+                """)
                 conn.commit()
 
     def get(self, key: str) -> dict | None:
@@ -76,3 +82,32 @@ class PersistentCache:
                     (time.time(), self.ttl),
                 )
                 conn.commit()
+
+    def acquire_warmer_lock(self, lock_key: str, lock_ttl: int) -> bool:
+        with self._lock:
+            now = time.time()
+            expires_at = now + lock_ttl
+            try:
+                with contextlib.closing(sqlite3.connect(str(self.db_path), timeout=5.0)) as conn:
+                    conn.execute("BEGIN IMMEDIATE")
+                    conn.execute("DELETE FROM locks WHERE expires_at < ?", (now,))
+                    conn.execute(
+                        "INSERT OR FAIL INTO locks (key, expires_at) VALUES (?, ?)",
+                        (lock_key, expires_at)
+                    )
+                    conn.commit()
+                    return True
+            except sqlite3.IntegrityError:
+                return False
+            except Exception:
+                return False
+
+    def release_warmer_lock(self, lock_key: str) -> None:
+        with self._lock:
+            try:
+                with contextlib.closing(sqlite3.connect(str(self.db_path), timeout=5.0)) as conn:
+                    conn.execute("BEGIN IMMEDIATE")
+                    conn.execute("DELETE FROM locks WHERE key = ?", (lock_key,))
+                    conn.commit()
+            except Exception:
+                pass

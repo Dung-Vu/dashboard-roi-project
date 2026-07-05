@@ -691,7 +691,46 @@ Expand the existing pytest suite with new automated tests to cover all fixed bug
 - [ ] No syntax errors, linting warnings, or runtime exceptions on the frontend/backend.
 - [ ] The local git repository remains on the `master` branch with all modifications kept local (no automatic push to origin).
 
+
 ### Verification
 - [ ] All 32 existing tests in the `tests/` directory pass successfully.
 - [ ] At least 3 new test cases/files are added to the `tests/` directory, testing the new fixes or optimizations.
 - [ ] `python -m pytest` executes and reports 100% success rate.
+
+## Follow-up — 2026-06-26T07:35:09Z
+
+Audit and refine the entire Bonario ROI Dashboard repository to identify and resolve remaining bugs, logical edge cases, security vulnerabilities, and reliability issues, preparing the codebase for final production deployment.
+
+Working directory: c:/Users/Admin/Desktop/Bonario/dashboard-roi-project
+Integrity mode: benchmark
+
+## Requirements
+
+### R1. Deep Bug Resolution and Concurrency Audit
+Perform a comprehensive audit of all backend services (including Odoo XML-RPC integrations, caching mechanisms, rate limiters, delta sync flows) and frontend components (SPA routing, UI interactions, chart lifecycles) to find and fix any logical flaws, memory leaks, unhandled exceptions, and concurrency/race conditions.
+
+### R2. Odoo Sync & Caching Performance Optimization
+Optimize Odoo XML-RPC connection logic and data precalculation speed. Ensure the SWR cache mechanism and proactive background cache warmer run reliably without concurrency lock deadlocks, preventing HTTP 524 timeouts under all conditions.
+
+### R3. Production Security & Session Hardening
+Audit backend endpoints and environment configs to prevent data leaks, secure session management, harden login rate limiters, ensure secure CORS headers, and verify that no credentials or secrets are committed.
+
+### R4. Chart Lifecycle & UI Responsiveness
+Ensure Chart.js instances are destroyed properly on view routing changes to prevent memory leaks. Optimize event debouncing and DOM updates to ensure smooth, responsive frontend performance.
+
+### R5. Automated Test Expansion
+Ensure all 47 existing tests in the `tests/` directory continue to pass, and add new automated test cases validating any new fixes, ensuring a 100% test success rate.
+
+## Acceptance Criteria
+
+### Execution & Cleanliness
+- [ ] Zero syntax errors, linting warnings, or runtime exceptions in frontend and backend.
+- [ ] No hardcoded secrets, credentials, or keys in the repository.
+- [ ] All changes remain local on the `master` branch (do not push to remote origin).
+
+### Verification
+- [ ] All 47 existing tests in the `tests/` directory pass successfully.
+- [ ] At least 3 new automated test cases are added in the `tests/` directory, validating the new fixes or optimizations.
+- [ ] `python -m pytest` executes and reports 100% success rate.
+- [ ] Rebuilt docker image builds successfully and container runs without errors.
+
