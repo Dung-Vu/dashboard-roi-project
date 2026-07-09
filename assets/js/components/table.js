@@ -28,7 +28,7 @@ const _COST_LABEL_MAP = {
     'non_billable': 'Không tính phí',
     'downpayment': 'Tạm ứng',
     'stock_move': 'Xuất kho',
-    'shipping_cost': 'Chi phí vận chuyển',
+    'shipping_cost': 'Phí vận chuyển (SC Logistics)',
     'other_expense': 'Chi phí khác',
 };
 

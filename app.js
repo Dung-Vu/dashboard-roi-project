@@ -588,9 +588,13 @@ function updateAggregatedCostTable(projectId, customCostBreakdown, nativeCost) {
         tBilled += b; tCommit += c; tExpected += e;
         const pct = nativeCost > 0 ? ((e / nativeCost) * 100).toFixed(1) : '0';
         const label = translateCostLabel(item.label || item.id);
+        const itemKey = (item.id || '').toLowerCase();
+        const tooltipTitle = itemKey === 'shipping_cost'
+            ? 'Phí vận chuyển qua các analytic account SC Logistics (1519/1518/1522/...). Không bao gồm business travel, vật tư phát sinh, hoặc PO-linked ship quốc tế — khác với bucket Expensess của Odoo profitability panel.'
+            : '';
 
         html += `<tr style="border-bottom:1px solid rgba(16,120,80,0.08);">
-            <td style="padding:5px 8px;color:var(--color-text-primary);font-weight:500;"><div style="display:flex;align-items:center;gap:6px;"><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:var(--color-emerald);opacity:0.6;"></span>${escapeHTML(label)}<span style="font-size:0.7rem;color:var(--color-text-secondary);font-weight:400;">(${pct}%)</span></div></td>
+            <td style="padding:5px 8px;color:var(--color-text-primary);font-weight:500;"><div style="display:flex;align-items:center;gap:6px;"><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:var(--color-emerald);opacity:0.6;"></span><span ${tooltipTitle ? `title="${tooltipTitle}"` : ''}>${escapeHTML(label)}</span><span style="font-size:0.7rem;color:var(--color-text-secondary);font-weight:400;">(${pct}%)</span></div></td>
             <td style="text-align:right;padding:5px 8px;font-family:var(--font-heading);color:var(--color-text-secondary);">${formatFullVND(b)}</td>
             <td style="text-align:right;padding:5px 8px;font-family:var(--font-heading);color:${c > 0 ? '#d97706' : 'var(--color-text-secondary)'};">${formatFullVND(c)}</td>
             <td style="text-align:right;padding:5px 8px;font-family:var(--font-heading);font-weight:600;color:var(--color-text-primary);">${formatFullVND(e)}</td>

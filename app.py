@@ -90,10 +90,16 @@ def create_app() -> Flask:
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)
 
     app.secret_key = settings.secret_key
-    
+
     import os
-    session_secure = not settings.debug or os.getenv("FLASK_ENV") == "production"
-    
+    cookie_secure_env = os.getenv("DASHBOARD_COOKIE_SECURE")
+    if cookie_secure_env is not None:
+        session_secure = cookie_secure_env.strip().lower() in {"1", "true", "yes", "on"}
+    else:
+        # Default: secure cookies when explicitly in production mode.
+        # Otherwise (DEBUG=1 or no FLASK_ENV=production), allow plain HTTP for LAN/dev access.
+        session_secure = os.getenv("FLASK_ENV") == "production"
+
     app.config.update(
         SESSION_COOKIE_SECURE=session_secure,
         SESSION_COOKIE_HTTPONLY=True,
