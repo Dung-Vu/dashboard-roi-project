@@ -1103,7 +1103,7 @@ class DashboardService:
 
         for entry in analytic_entries:
             amount = as_decimal(entry.get("amount"))
-            if amount >= -TWO_DECIMALS:
+            if abs(amount) < TWO_DECIMALS:
                 continue
             account_id = relation_id(entry.get("account_id"))
             target_project = project_by_account_id.get(account_id)
@@ -1128,29 +1128,80 @@ class DashboardService:
                 target_adjustment = adjustments[target_project["id"]]
                 target_adjustment["foreign_cost_removed"] += cost_amount
 
-            for foreign_order_id in foreign_order_ids:
-                source_project = project_by_sale_order_id.get(foreign_order_id)
-                if not source_project or source_project["id"] not in adjustments:
-                    continue
-                source_adjustment = adjustments[source_project["id"]]
-                source_adjustment["foreign_cost_added"] += cost_amount
+            valid_source_projects = [
+                project_by_sale_order_id[fid]
+                for fid in foreign_order_ids
+                if project_by_sale_order_id.get(fid) and project_by_sale_order_id[fid]["id"] in adjustments
+            ]
+            if valid_source_projects:
+                count_sources = Decimal(len(valid_source_projects))
+                remaining = cost_amount
+                for idx, source_project in enumerate(valid_source_projects):
+                    if idx == len(valid_source_projects) - 1:
+                        share = remaining
+                    else:
+                        share = (cost_amount / count_sources).quantize(TWO_DECIMALS, rounding=ROUND_HALF_UP)
+                        remaining -= share
+                    adjustments[source_project["id"]]["foreign_cost_added"] += share
 
     def _parse_analytic_account_ids(self, value: Any) -> set[int]:
-        if value is None:
+        if value is None or isinstance(value, bool):
             return set()
-        values = value if isinstance(value, (list, tuple, set)) else str(value).split(",")
-        account_ids: set[int] = set()
+        if isinstance(value, int):
+            return {value} if value > 0 else set()
+        if isinstance(value, dict):
+            account_ids: set[int] = set()
+            for k in value.keys():
+                account_ids.update(self._parse_analytic_account_ids(k))
+            return account_ids
+        if isinstance(value, str):
+            stripped = value.strip()
+            if stripped.startswith("{") or stripped.startswith("["):
+                try:
+                    parsed = json.loads(stripped)
+                    if isinstance(parsed, (dict, list)):
+                        return self._parse_analytic_account_ids(parsed)
+                except (ValueError, TypeError):
+                    pass
+            values: Iterable[Any] = stripped.split(",")
+        elif isinstance(value, (list, tuple, set)):
+            values = value
+        else:
+            values = str(value).split(",")
+
+        account_ids = set()
         for raw_value in values:
-            text = str(raw_value).strip()
-            digits = []
-            for char in text:
-                if not char.isdigit():
-                    break
-                digits.append(char)
-            if not digits:
+            if isinstance(raw_value, (dict, list, tuple, set)):
+                account_ids.update(self._parse_analytic_account_ids(raw_value))
                 continue
-            account_ids.add(int("".join(digits)))
+            for token in str(raw_value).split(","):
+                text = token.strip().strip("\"'{}[]")
+                digits = []
+                for char in text:
+                    if not char.isdigit():
+                        break
+                    digits.append(char)
+                if digits:
+                    val = int("".join(digits))
+                    if val > 0:
+                        account_ids.add(val)
         return account_ids
+
+    def _get_analytic_distribution_share(self, distribution: Any, account_id: int) -> Decimal:
+        if not distribution or not account_id:
+            return Decimal("0")
+        if isinstance(distribution, str):
+            try:
+                distribution = json.loads(distribution)
+            except (ValueError, TypeError):
+                return Decimal("1") if account_id in self._parse_analytic_account_ids(distribution) else Decimal("0")
+        if isinstance(distribution, dict):
+            total_pct = Decimal("0")
+            for raw_key, pct in distribution.items():
+                if account_id in self._parse_analytic_account_ids(raw_key):
+                    total_pct += as_decimal(pct)
+            return total_pct / Decimal("100")
+        return Decimal("1") if account_id in self._parse_analytic_account_ids(distribution) else Decimal("0")
 
     def _build_projects_dashboard_row(
         self,
@@ -1954,6 +2005,10 @@ class DashboardService:
         odoo_remaining_net = as_decimal(line.get("untaxed_amount_to_invoice"))
         drift_vs_odoo = remaining_net - odoo_remaining_net
         is_stale = abs(drift_vs_odoo) >= TWO_DECIMALS
+        if line.get("is_downpayment") and quoted_net == 0 and odoo_remaining_net == 0:
+            remaining_net = Decimal("0")
+            drift_vs_odoo = Decimal("0")
+            is_stale = False
 
         product_ref = line.get("product_id")
         product_id = product_ref[0] if product_ref else None
@@ -2034,7 +2089,24 @@ class DashboardService:
             as_decimal(entry["actual_cost"])
             for entry in stock_cost_map.values()
         )
+        stock_only_actual = (
+            as_decimal(model["summary"].get("actual_cost_total"))
+            if not analytic_entries
+            else Decimal("0")
+        )
         model["summary"].update(accounting_pipeline["summary"])
+        if (
+            not analytic_entries
+            and stock_only_actual != 0
+            and as_decimal(accounting_pipeline["summary"]["actual_cost_total"]) == 0
+        ):
+            model["summary"]["actual_cost_total"] = stock_only_actual
+            model["summary"]["final_cost_total"] = stock_only_actual + as_decimal(
+                accounting_pipeline["summary"]["open_commitment_total"]
+            )
+            model["summary"]["cost_model"] = "stock_valuation_fallback"
+            model["summary"]["cost_source_label"] = "Stock valuation fallback"
+
         model["summary"]["stock_valuation_total"] = stock_valuation_total
         model["cost_sources"] = accounting_pipeline["cost_sources"]
         model["reconciliation"] = {
@@ -2082,14 +2154,15 @@ class DashboardService:
 
         posted_entries, posted_sources = self._get_posted_actual_costs(account_id)
         draft_sources = self._get_draft_bill_commitments(account_id)
-        draft_purchase_line_ids = {
-            source["purchase_line_id"]
-            for source in draft_sources
-            if source.get("purchase_line_id")
-        }
+        draft_commitments_by_po_line: dict[int, Decimal] = defaultdict(lambda: Decimal("0"))
+        for source in draft_sources:
+            po_line_id = source.get("purchase_line_id")
+            if po_line_id:
+                draft_commitments_by_po_line[po_line_id] += as_decimal(source["amount"])
+
         po_sources, raw_po_open_total = self._get_po_open_commitments(
             account_id,
-            draft_purchase_line_ids,
+            draft_commitments_by_po_line,
         )
 
         posted_actual_total = sum(as_decimal(source["amount"]) for source in posted_sources)
@@ -2163,6 +2236,7 @@ class DashboardService:
                 "move_id",
                 "parent_state",
                 "move_type",
+                "display_type",
                 "balance",
                 "product_id",
                 "purchase_line_id",
@@ -2173,22 +2247,41 @@ class DashboardService:
         move_line_map = {line["id"]: line for line in move_lines}
         posted_entries: list[dict[str, Any]] = []
         sources_by_move_line: dict[int, dict[str, Any]] = {}
-        processed_move_line_ids: set[int] = set()
+        processed_entry_ids: set[int] = set()
 
         for analytic_entry in analytic_entries:
+            entry_id = analytic_entry.get("id")
+            if entry_id is not None and entry_id in processed_entry_ids:
+                continue
             move_line_id = relation_id(analytic_entry.get("move_line_id"))
             move_line = move_line_map.get(move_line_id)
             if not move_line or move_line.get("parent_state") != "posted":
                 continue
-            if move_line["id"] in processed_move_line_ids:
-                continue
-            if move_line.get("move_type") in {"out_invoice", "out_refund", "out_receipt"}:
-                continue
 
-            amount = as_decimal(move_line.get("balance"))
+            move_type = move_line.get("move_type")
+            if move_type in {"out_invoice", "out_refund", "out_receipt"}:
+                is_cogs = (
+                    move_line.get("display_type") == "cogs"
+                    or (
+                        analytic_entry.get("category") not in {"invoice", None, False}
+                        and as_decimal(analytic_entry.get("amount")) < 0
+                    )
+                )
+                if not is_cogs:
+                    continue
+
+            if analytic_entry.get("amount") is not None:
+                amount = -as_decimal(analytic_entry.get("amount"))
+            else:
+                share = self._get_analytic_distribution_share(move_line.get("analytic_distribution"), account_id)
+                if share <= 0:
+                    share = Decimal("1")
+                amount = as_decimal(move_line.get("balance")) * share
+
             if abs(amount) < TWO_DECIMALS:
                 continue
-            processed_move_line_ids.add(move_line["id"])
+            if entry_id is not None:
+                processed_entry_ids.add(entry_id)
 
             posted_entry = {
                 **analytic_entry,
@@ -2247,9 +2340,13 @@ class DashboardService:
             return []
         sources: list[dict[str, Any]] = []
         for line in lines:
-            if not self._analytic_distribution_matches(line.get("analytic_distribution"), account_id):
+            dist = line.get("analytic_distribution")
+            if not self._analytic_distribution_matches(dist, account_id):
                 continue
-            amount = as_decimal(line.get("balance"))
+            share = self._get_analytic_distribution_share(dist, account_id)
+            if share <= 0:
+                continue
+            amount = as_decimal(line.get("balance")) * share
             if abs(amount) < TWO_DECIMALS:
                 continue
             sources.append(
@@ -2264,7 +2361,7 @@ class DashboardService:
                     "label": line.get("name") or "Draft vendor bill line",
                     "date": line.get("date"),
                     "purchase_line_id": relation_id(line.get("purchase_line_id")),
-                    "analytic_distribution": line.get("analytic_distribution"),
+                    "analytic_distribution": dist,
                 }
             )
         return sources
@@ -2272,7 +2369,7 @@ class DashboardService:
     def _get_po_open_commitments(
         self,
         account_id: int,
-        excluded_purchase_line_ids: set[int],
+        excluded_purchase_line_ids: set[int] | dict[int, Decimal] | None = None,
     ) -> tuple[list[dict[str, Any]], Decimal]:
         try:
             lines = self.client.search_read(
@@ -2301,9 +2398,17 @@ class DashboardService:
         sources: list[dict[str, Any]] = []
         raw_open_total = Decimal("0")
         for line in lines:
-            if line["id"] in excluded_purchase_line_ids:
+            if (
+                excluded_purchase_line_ids
+                and not isinstance(excluded_purchase_line_ids, dict)
+                and line["id"] in excluded_purchase_line_ids
+            ):
                 continue
-            if not self._analytic_distribution_matches(line.get("analytic_distribution"), account_id):
+            dist = line.get("analytic_distribution")
+            if not self._analytic_distribution_matches(dist, account_id):
+                continue
+            share = self._get_analytic_distribution_share(dist, account_id)
+            if share <= 0:
                 continue
 
             product_qty = as_decimal(line.get("product_qty"))
@@ -2312,7 +2417,7 @@ class DashboardService:
             if product_qty <= 0 or open_qty <= 0:
                 continue
 
-            raw_amount = as_decimal(line.get("price_subtotal")) * open_qty / product_qty
+            raw_amount = (as_decimal(line.get("price_subtotal")) * open_qty / product_qty) * share
             raw_open_total += raw_amount
             company_id = relation_id(line.get("company_id"))
             currency_id = relation_id(line.get("currency_id"))
@@ -2322,7 +2427,12 @@ class DashboardService:
                 company_id,
                 line.get("date_planned"),
             )
-            if amount is None or abs(amount) < TWO_DECIMALS:
+            if amount is None:
+                continue
+            if isinstance(excluded_purchase_line_ids, dict) and line["id"] in excluded_purchase_line_ids:
+                draft_covered = as_decimal(excluded_purchase_line_ids[line["id"]])
+                amount = amount - draft_covered
+            if amount < TWO_DECIMALS:
                 continue
 
             sources.append(
@@ -2339,7 +2449,7 @@ class DashboardService:
                     "purchase_line_id": line["id"],
                     "raw_amount": raw_amount,
                     "raw_currency": relation_name(line.get("currency_id")),
-                    "analytic_distribution": line.get("analytic_distribution"),
+                    "analytic_distribution": dist,
                 }
             )
         return sources, raw_open_total
@@ -2347,11 +2457,6 @@ class DashboardService:
     def _analytic_distribution_matches(self, distribution: Any, account_id: int) -> bool:
         if not distribution:
             return False
-        if isinstance(distribution, dict):
-            return any(
-                account_id in self._parse_analytic_account_ids(key)
-                for key in distribution
-            )
         return account_id in self._parse_analytic_account_ids(distribution)
 
     def _convert_to_company_currency(
@@ -2863,7 +2968,7 @@ class DashboardService:
                         "references": set(),
                     },
                 )
-                entry["actual_cost"] += as_decimal(abs(layer.get("value") or 0))
+                entry["actual_cost"] += -as_decimal(layer.get("value") or 0)
 
                 if move.get("picking_id"):
                     entry["references"].add(move["picking_id"][1])
@@ -3032,7 +3137,10 @@ class DashboardService:
             "non_service_invoiced_total": breakdown.get("non_service", {}).get("invoiced_net", 0),
             "non_service_remaining_total": breakdown.get("non_service", {}).get("remaining_net", 0),
             "non_service_actual_cost": breakdown.get("non_service", {}).get("actual_cost", 0),
-            "downpayment_total": breakdown.get("downpayment", {}).get("quoted_net", 0),
+            "downpayment_total": (
+                breakdown.get("downpayment", {}).get("invoiced_net", 0)
+                or breakdown.get("downpayment", {}).get("quoted_net", 0)
+            ),
         }
 
     def _build_alerts(self, project: dict[str, Any], summary: dict[str, Any]) -> list[str]:
