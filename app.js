@@ -603,9 +603,13 @@ function updateAggregatedCostTable(projectId, customCostBreakdown, nativeCost) {
         tBilled += b - gap; tCommit += c; tExpected += e - gap;
         const pct = nativeCost > 0 ? ((e / nativeCost) * 100).toFixed(1) : '0';
         const label = translateCostLabel(item.label || item.id);
+        const itemKey = (item.id || '').toLowerCase();
+        const tooltipTitle = itemKey === 'shipping_cost'
+            ? 'Phí vận chuyển ghi vào 10 mã analytic SC Dept (Logistics), gồm cả dòng qua PO. Không gồm công tác phí (1439), xăng xe (568) và các mã BD. Số theo sổ sách nên có thể khác nhóm Expenses của panel Profitability Odoo.'
+            : '';
 
         html += `<tr style="border-bottom:1px solid rgba(16,120,80,0.08);">
-            <td style="padding:5px 8px;color:var(--color-text-primary);font-weight:500;"><div style="display:flex;align-items:center;gap:6px;"><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:var(--color-emerald);opacity:0.6;"></span>${escapeHTML(label)}<span style="font-size:0.7rem;color:var(--color-text-secondary);font-weight:400;">(${pct}%)</span></div></td>
+            <td style="padding:5px 8px;color:var(--color-text-primary);font-weight:500;"><div style="display:flex;align-items:center;gap:6px;"><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:var(--color-emerald);opacity:0.6;"></span><span ${tooltipTitle ? `title="${tooltipTitle}"` : ''}>${escapeHTML(label)}</span><span style="font-size:0.7rem;color:var(--color-text-secondary);font-weight:400;">(${pct}%)</span></div></td>
             <td style="text-align:right;padding:5px 8px;font-family:var(--font-heading);color:var(--color-text-secondary);">${formatFullVND(b)}</td>
             <td style="text-align:right;padding:5px 8px;font-family:var(--font-heading);color:${c > 0 ? '#d97706' : 'var(--color-text-secondary)'};">${formatFullVND(c)}</td>
             <td style="text-align:right;padding:5px 8px;font-family:var(--font-heading);font-weight:600;color:var(--color-text-primary);">${formatFullVND(e)}</td>

@@ -32,23 +32,37 @@ class TestProductionSecurity(unittest.TestCase):
             odoo_block_prod=odoo_block_prod,
         )
 
-    def test_session_cookie_secure_when_debug_false(self):
-        """Verify that SESSION_COOKIE_SECURE is True when debug is disabled and lifetime is 12h."""
-        mock_settings = self._make_settings(debug=False)
-        with patch("app.get_settings", return_value=mock_settings):
-            from app import create_app
-            app = create_app()
-            self.assertTrue(app.config["SESSION_COOKIE_SECURE"])
-            self.assertEqual(app.config["PERMANENT_SESSION_LIFETIME"], timedelta(hours=12))
+    def _create_app_with_env(self, env: dict[str, str], *, debug: bool = False):
+        clean = {k: v for k, v in os.environ.items() if k not in {"FLASK_ENV", "DASHBOARD_COOKIE_SECURE"}}
+        clean.update(env)
+        with patch.dict(os.environ, clean, clear=True):
+            with patch("app.get_settings", return_value=self._make_settings(debug=debug)):
+                from app import create_app
+                return create_app()
+
+    def test_session_cookie_not_secure_without_flask_env_production(self):
+        """LAN HTTP login: cookie is not Secure unless FLASK_ENV=production; lifetime 12h."""
+        app = self._create_app_with_env({}, debug=False)
+        self.assertFalse(app.config["SESSION_COOKIE_SECURE"])
+        self.assertEqual(app.config["PERMANENT_SESSION_LIFETIME"], timedelta(hours=12))
+
+    def test_session_cookie_secure_when_flask_env_production(self):
+        app = self._create_app_with_env({"FLASK_ENV": "production"}, debug=False)
+        self.assertTrue(app.config["SESSION_COOKIE_SECURE"])
+
+    def test_cookie_secure_env_override_forces_secure(self):
+        app = self._create_app_with_env({"DASHBOARD_COOKIE_SECURE": "1"}, debug=True)
+        self.assertTrue(app.config["SESSION_COOKIE_SECURE"])
+
+    def test_cookie_secure_env_override_disables_secure(self):
+        app = self._create_app_with_env(
+            {"FLASK_ENV": "production", "DASHBOARD_COOKIE_SECURE": "0"}, debug=False
+        )
+        self.assertFalse(app.config["SESSION_COOKIE_SECURE"])
 
     def test_session_cookie_secure_when_debug_true(self):
-        """Verify that SESSION_COOKIE_SECURE is False when debug is enabled."""
-        mock_settings = self._make_settings(debug=True)
-        with patch.dict(os.environ, {"FLASK_ENV": "development"}, clear=False):
-            with patch("app.get_settings", return_value=mock_settings):
-                from app import create_app
-                app = create_app()
-                self.assertFalse(app.config["SESSION_COOKIE_SECURE"])
+        app = self._create_app_with_env({}, debug=True)
+        self.assertFalse(app.config["SESSION_COOKIE_SECURE"])
 
     def test_require_auth_enforced_when_testing_not_set(self):
         """SEC-02: Without TESTING=True, protected endpoints must return 401 even under pytest/unittest."""
