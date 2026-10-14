@@ -46,7 +46,7 @@ class TestChartLifecycle(unittest.TestCase):
 
     def test_behavioral_handle_routing_destroys_active_chart_instances_in_vm(self):
         """Behavioral test: Execute handleRouting() in Node VM and verify .destroy() is invoked on all chart instances."""
-        node_script = """
+        node_script = r"""
         const fs = require('fs');
         const path = require('path');
         const vm = require('vm');
@@ -62,6 +62,8 @@ class TestChartLifecycle(unittest.TestCase):
         }
 
         const sandbox = {
+            global: {},
+            window: {},
             console,
             Intl,
             Number,
@@ -70,10 +72,15 @@ class TestChartLifecycle(unittest.TestCase):
             Date,
             Array,
             Object,
+            RegExp,
+            Error,
+            TypeError,
             Set,
             Map,
+            setTimeout: () => {},
+            setInterval: () => {},
             location: { hash: '#/overview' },
-            localStorage: { getItem: () => null, setItem: () => {} },
+            localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
             getComputedStyle: () => ({ getPropertyValue: () => '1' }),
             document: {
                 documentElement: {},
@@ -104,11 +111,12 @@ class TestChartLifecycle(unittest.TestCase):
         let code = '';
         for (const f of files) {
             let src = fs.readFileSync(path.join(root, f), 'utf8');
-            src = src.replace(/import\\s+[\\s\\S]*?from\\s+['"].*?['"];?/g, '');
-            src = src.replace(/\\bexport\\s+(const|let|var|function|async\\s+function|class)\\b/g, '$1');
-            code += '\\n' + src;
+            src = src.replace(/import\s+(?:[\w*\s{},]*)\s+from\s+['"].*?['"];?/g, '');
+            src = src.replace(/\bexport\s+(const|let|var|function|async\s+function|class)\b/g, '$1');
+            src = src.replace(/\bexport\s+\{\s*[\w\s,]*\s*\};?/g, '');
+            code += '\n' + src;
         }
-        code = code.replace(/document\\.addEventListener\\('DOMContentLoaded'[\\s\\S]*\\}\\);?\\s*$/, '');
+        code = code.replace(/document\.addEventListener\('DOMContentLoaded'[\s\S]*\}\);?\s*$/, '');
         code += `
         state.gpChart = makeFakeChart('gpChart');
         state.revenueDoughnutChart = makeFakeChart('revenueDoughnutChart');
@@ -120,7 +128,7 @@ class TestChartLifecycle(unittest.TestCase):
             'Nội thất rời': makeFakeChart('tagChart:Nội thất rời'),
         };
         handleRouting();
-        globalThis.__result = {
+        window.__result = {
             destroyed,
             gpChart: state.gpChart,
             revenueDoughnutChart: state.revenueDoughnutChart,
@@ -131,10 +139,11 @@ class TestChartLifecycle(unittest.TestCase):
         };
         `;
         sandbox.makeFakeChart = makeFakeChart;
+        sandbox.destroyed = destroyed;
         vm.createContext(sandbox);
         vm.runInContext(code, sandbox);
 
-        process.stdout.write(JSON.stringify(sandbox.__result));
+        process.stdout.write(JSON.stringify(sandbox.window.__result));
         """
         try:
             proc = subprocess.run(
@@ -142,8 +151,10 @@ class TestChartLifecycle(unittest.TestCase):
                 cwd=str(self.root_dir),
                 capture_output=True,
                 text=True,
-                check=True,
+                check=False,
             )
+            if proc.returncode != 0:
+                self.fail(f"Node VM error (exit {proc.returncode}):\n{proc.stderr}")
             res = json.loads(proc.stdout)
             expected_destroyed = {
                 "gpChart",
