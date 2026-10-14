@@ -4,6 +4,8 @@ import json
 import logging
 import time
 import threading
+import os
+import re
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
@@ -62,6 +64,8 @@ COMPANY_SCOPES = {
 }
 
 SHIPPING_ANALYTIC_ACCOUNT_IDS_FALLBACK = frozenset({
+    518,   # 2-SC_Logistics (Archived Bonario SC)
+    1237,  # [ORD] 2-SC_Logistics (Archived Ordinaire SC)
     1519,  # SC - Logistics OPS (Bonario SC)
     1518,  # SC - Logistics SO (Bonario SC)
     1271,  # SC - Rush logistics - Ship gấp (Bonario SC)
@@ -70,8 +74,31 @@ SHIPPING_ANALYTIC_ACCOUNT_IDS_FALLBACK = frozenset({
     1523,  # [ORD] SC - Logistics SO (Ordinaire SC)
     1270,  # [ORD] SC - Rush logistics - Ship gấp (Ordinaire SC)
     1239,  # [ORD] SC_Shipping (CLT, demo...) (Ordinaire SC)
+    506,   # BD_Shipping (CLT, demo...) (Bonario BD)
+    1427,  # ORD - BD_Shipping (CLT, demo...) (Ordinaire BD)
 })
-SHIPPING_ACCOUNT_NAME_KEYWORDS = ("logistics", "ship", "vận chuyển", "shipping")
+SHIPPING_ACCOUNT_NAME_KEYWORDS = (
+    "logistics",
+    "ship",
+    "vận chuyển",
+    "giao hàng",
+    "cước",
+    "shipping",
+)
+EXCLUDED_SHIPPING_ACCOUNT_IDS = frozenset({
+    1439,  # SC_Trips in processing SO (business trip hotel/meals)
+    568,   # SC_Car related (fuel, maintainnance...)
+    1238,  # [ORD] SC_Car related (fuel, maintainnance...)
+    510,   # BD_Networking & Partnerships (substring 'ship' trap)
+    552,   # OPS_Networking & Partnerships (substring 'ship' trap)
+    1426,  # ORD - BD_Networking & Partnerships (substring 'ship' trap)
+})
+NON_DEPARTMENT_PLAN_KEYWORDS = (
+    "odoo projects",
+    "furny projects",
+    "cost type",
+    "business units",
+)
 SHIPPING_ACCOUNT_REFRESH_SECONDS = 86400
 
 
@@ -92,6 +119,8 @@ def relation_name(value: Any) -> str | None:
 
 
 def relation_id(value: Any) -> int | None:
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
     if isinstance(value, (list, tuple)) and value:
         return value[0]
     return None
@@ -113,11 +142,25 @@ class DashboardService:
         self._active_updates_lock = Lock()
         self._warmer_stop_event = threading.Event()
         self._shipping_account_ids: set[int] | None = None
+        self._shipping_account_names: dict[int, str] = {}
         self._shipping_account_ids_lock = Lock()
         self._shipping_account_ids_refresh_at: float = 0.0
+        self._latest_shipping_data: dict[str, Any] = {}
 
     def test_connection(self) -> dict[str, Any]:
         return self.client.test_connection()
+
+    @staticmethod
+    def _matches_shipping_account_name(name: str) -> bool:
+        name_lower = (name or "").strip().lower()
+        if not name_lower or "partnership" in name_lower:
+            return False
+        for kw in ("logistics", "vận chuyển", "giao hàng", "cước", "shipping"):
+            if kw in name_lower:
+                return True
+        if re.search(r"(?<![a-z])ship", name_lower):
+            return True
+        return False
 
     def _get_shipping_account_ids(self) -> set[int]:
         now = time.time()
@@ -128,27 +171,55 @@ class DashboardService:
             ):
                 return self._shipping_account_ids
             ids = set(SHIPPING_ANALYTIC_ACCOUNT_IDS_FALLBACK)
+            env_override = os.getenv("SHIPPING_ANALYTIC_IDS", "").strip()
+            if env_override:
+                for raw_part in env_override.split(","):
+                    part = raw_part.strip()
+                    if part.isdigit():
+                        ids.add(int(part))
+
+            domain = [
+                "|", "|", "|", "|",
+                ("name", "ilike", "logistics"),
+                ("name", "ilike", "ship"),
+                ("name", "ilike", "vận chuyển"),
+                ("name", "ilike", "giao hàng"),
+                ("name", "ilike", "cước"),
+            ]
             try:
-                accounts = self.client.search_read(
-                    "account.analytic.account",
-                    [
-                        ("plan_id.name", "ilike", "SC"),
-                        "|", "|",
-                        ("name", "ilike", "logistics"),
-                        ("name", "ilike", "ship"),
-                        ("name", "ilike", "vận chuyển"),
-                    ],
-                    ["id", "name", "plan_id"],
-                    limit=500,
-                )
+                if hasattr(self.client, "call_method"):
+                    accounts = self.client.call_method(
+                        "account.analytic.account",
+                        "search_read",
+                        [domain],
+                        {
+                            "fields": ["id", "name", "plan_id", "active"],
+                            "limit": 1000,
+                            "context": {"active_test": False},
+                        },
+                    ) or []
+                else:
+                    accounts = self.client.search_read(
+                        "account.analytic.account",
+                        domain,
+                        ["id", "name", "plan_id"],
+                        limit=1000,
+                    )
                 for acc in accounts:
-                    name = (acc.get("name") or "").lower()
-                    if any(kw in name for kw in SHIPPING_ACCOUNT_NAME_KEYWORDS):
-                        ids.add(int(acc["id"]))
+                    acc_id = int(acc["id"])
+                    acc_name = acc.get("name") or ""
+                    self._shipping_account_names[acc_id] = acc_name
+                    if acc_id in EXCLUDED_SHIPPING_ACCOUNT_IDS:
+                        continue
+                    plan_name = (relation_name(acc.get("plan_id")) or "").lower()
+                    if any(non_dept in plan_name for non_dept in NON_DEPARTMENT_PLAN_KEYWORDS):
+                        continue
+                    if self._matches_shipping_account_name(acc_name):
+                        ids.add(acc_id)
             except Exception as e:
                 logger.warning(
                     f"Failed to discover shipping analytic accounts from Odoo: {e}. "
-                    f"Using hardcoded fallback: {sorted(SHIPPING_ANALYTIC_ACCOUNT_IDS_FALLBACK)}"
+                    f"Using hardcoded fallback: {sorted(ids)}"
                 )
             self._shipping_account_ids = ids
             self._shipping_account_ids_refresh_at = now + SHIPPING_ACCOUNT_REFRESH_SECONDS
@@ -178,94 +249,350 @@ class DashboardService:
                     continue
         return False
 
-    def _fetch_shipping_costs(self, account_ids: list[int]) -> tuple[dict[int, float], dict[int, dict[str, float]]]:
-        shipping_cost_by_project = {}
-        shipping_cost_by_project_and_month = defaultdict(lambda: defaultdict(float))
-        if not account_ids:
-            return shipping_cost_by_project, {}
+    def _paginated_search_read(
+        self,
+        model: str,
+        domain: list[Any],
+        fields: list[str],
+        batch_size: int = 1000,
+        max_records: int = 100000,
+        context: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
+        results: list[dict[str, Any]] = []
+        offset = 0
+        while offset < max_records:
+            if context is not None and hasattr(self.client, "call_method"):
+                batch = self.client.call_method(
+                    model,
+                    "search_read",
+                    [domain],
+                    {
+                        "fields": fields,
+                        "limit": batch_size,
+                        "offset": offset,
+                        "context": context,
+                    },
+                ) or []
+            else:
+                batch = self.client.search_read(
+                    model,
+                    domain,
+                    fields,
+                    limit=batch_size,
+                    offset=offset,
+                )
+            if not batch:
+                break
+            results.extend(batch)
+            if len(batch) < batch_size:
+                break
+            offset += batch_size
+        if len(results) >= max_records:
+            logger.warning(f"Paginated search_read on {model} reached safety cap ({max_records} rows).")
+        return results
 
-        # Resolve whitelist of shipping-related analytic account IDs once per fetch.
-        shipping_ids = self._get_shipping_account_ids()
-        logger.debug(f"_fetch_shipping_costs whitelist = {sorted(shipping_ids)}")
+    def _fetch_shipping_data(
+        self,
+        account_ids: list[int] | None = None,
+        date_from: str = "2026-01-01",
+    ) -> dict[str, Any]:
+        shipping_ids = sorted(self._get_shipping_account_ids())
+        logger.debug(f"_fetch_shipping_data whitelist = {shipping_ids}")
 
-        try:
-            # Fetch analytic lines for these accounts
-            analytic_lines = self.client.search_read(
+        shipping_cost_by_project: dict[int, Decimal] = defaultdict(lambda: Decimal("0"))
+        shipping_po_by_project: dict[int, Decimal] = defaultdict(lambda: Decimal("0"))
+        shipping_non_po_by_project: dict[int, Decimal] = defaultdict(lambda: Decimal("0"))
+        shipping_draft_by_project: dict[int, Decimal] = defaultdict(lambda: Decimal("0"))
+        shipping_cost_by_project_and_month: dict[int, dict[str, Decimal]] = defaultdict(
+            lambda: defaultdict(lambda: Decimal("0"))
+        )
+
+        assigned_by_company: dict[str, Decimal] = defaultdict(lambda: Decimal("0"))
+        unassigned_by_company: dict[str, Decimal] = defaultdict(lambda: Decimal("0"))
+        assigned_by_month: dict[str, dict[str, Decimal]] = defaultdict(
+            lambda: defaultdict(lambda: Decimal("0"))
+        )
+        unassigned_by_month: dict[str, dict[str, Decimal]] = defaultdict(
+            lambda: defaultdict(lambda: Decimal("0"))
+        )
+        unassigned_items: list[dict[str, Any]] = []
+
+        if not shipping_ids:
+            return {
+                "by_project": {},
+                "po_by_project": {},
+                "non_po_by_project": {},
+                "draft_by_project": {},
+                "by_project_and_month": {},
+                "company_summary": {},
+                "unassigned_items": [],
+            }
+
+        aal_fields = [
+            "id",
+            "date",
+            "name",
+            "amount",
+            "account_id",
+            "x_plan5_id",
+            "move_line_id",
+            "company_id",
+            "partner_id",
+            "ref",
+            "category",
+        ]
+        analytic_lines = self._paginated_search_read(
+            "account.analytic.line",
+            [["x_plan5_id", "in", shipping_ids]],
+            aal_fields,
+            batch_size=1000,
+        )
+
+        used_fallback_aal_query = False
+        if not analytic_lines and account_ids:
+            used_fallback_aal_query = True
+            analytic_lines = self._paginated_search_read(
                 "account.analytic.line",
                 [["account_id", "in", account_ids], ["category", "!=", "invoice"]],
-                ["id", "amount", "account_id", "move_line_id"],
-                limit=100000
+                aal_fields,
+                batch_size=1000,
             )
-            move_line_ids = sorted({
-                relation_id(line.get("move_line_id"))
-                for line in analytic_lines
-                if relation_id(line.get("move_line_id"))
-            })
-            if move_line_ids:
-                # Batch fetch move lines
-                move_lines = []
-                chunk_size = 500
-                for i in range(0, len(move_line_ids), chunk_size):
-                    chunk = move_line_ids[i:i+chunk_size]
-                    chunk_lines = self.client.search_read(
-                        "account.move.line",
-                        [["id", "in", chunk]],
-                        ["id", "analytic_distribution", "parent_state", "move_type", "balance", "purchase_line_id", "date"],
-                        limit=len(chunk)
-                    )
-                    move_lines.extend(chunk_lines)
 
-                move_line_map = {ml["id"]: ml for ml in move_lines}
+        move_line_ids = sorted({
+            relation_id(line.get("move_line_id"))
+            for line in analytic_lines
+            if relation_id(line.get("move_line_id"))
+        })
 
-                # Track processed move line IDs per analytic account to avoid double-counting
-                processed_ml_per_account = defaultdict(set)
+        move_line_map: dict[int, dict[str, Any]] = {}
+        if move_line_ids:
+            chunk_size = 1000
+            for i in range(0, len(move_line_ids), chunk_size):
+                chunk = move_line_ids[i : i + chunk_size]
+                chunk_lines = self.client.search_read(
+                    "account.move.line",
+                    [["id", "in", chunk]],
+                    [
+                        "id",
+                        "analytic_distribution",
+                        "parent_state",
+                        "move_type",
+                        "balance",
+                        "purchase_line_id",
+                        "date",
+                        "move_id",
+                        "partner_id",
+                        "ref",
+                        "name",
+                        "company_id",
+                    ],
+                    limit=len(chunk),
+                )
+                for ml in chunk_lines:
+                    move_line_map[ml["id"]] = ml
 
-                for line in analytic_lines:
-                    ml_ref = line.get("move_line_id")
-                    if not ml_ref:
+        shipping_id_set = set(shipping_ids)
+        for line in analytic_lines:
+            ship_acc_id = relation_id(line.get("x_plan5_id"))
+            ship_acc_name = (
+                relation_name(line.get("x_plan5_id"))
+                or self._shipping_account_names.get(ship_acc_id or 0, "")
+            )
+            ml_id = relation_id(line.get("move_line_id"))
+            ml: dict[str, Any] = {}
+            is_po = False
+
+            if ml_id:
+                ml = move_line_map.get(ml_id) or {}
+                if not ml or ml.get("parent_state") != "posted":
+                    continue
+                move_type = ml.get("move_type")
+                if move_type in {"out_invoice", "out_refund", "out_receipt"}:
+                    continue
+                if move_type and move_type not in {"in_invoice", "in_refund", "entry", "in_receipt"}:
+                    continue
+                if used_fallback_aal_query and ship_acc_id not in shipping_id_set:
+                    if not self._is_shipping_distribution(ml.get("analytic_distribution")):
                         continue
-                    ml_id = relation_id(ml_ref)
-                    if not ml_id:
-                        continue
+                is_po = bool(relation_id(ml.get("purchase_line_id")) or ml.get("purchase_line_id"))
+            else:
+                if line.get("category") == "invoice":
+                    continue
+                if ship_acc_id not in shipping_id_set:
+                    continue
 
-                    ml = move_line_map.get(ml_id)
-                    if not ml or ml.get("parent_state") != "posted":
-                        continue
-                    if ml.get("move_type") in {"out_invoice", "out_refund", "out_receipt"}:
-                        continue
+            cost = -as_decimal(line.get("amount"))
+            if cost == 0:
+                continue
 
-                    # Skip if linked to a purchase order line: those costs flow through COGS
-                    # / cost_of_goods_sold bucket in Odoo profitability panel, not shipping.
-                    if ml.get("purchase_line_id"):
-                        continue
+            aal_date = str(line.get("date") or ml.get("date") or "")[:10]
+            yyyy_mm = aal_date[:7] if len(aal_date) >= 7 else ""
+            comp_ref = line.get("company_id") or ml.get("company_id")
+            comp_key = self._company_key_from_ref(comp_ref) or ""
+            comp_name = relation_name(comp_ref) or ""
+            proj_acc_id = relation_id(line.get("account_id"))
 
-                    acc_id = line["account_id"][0]
+            if proj_acc_id:
+                shipping_cost_by_project[proj_acc_id] += cost
+                if is_po:
+                    shipping_po_by_project[proj_acc_id] += cost
+                else:
+                    shipping_non_po_by_project[proj_acc_id] += cost
+                if yyyy_mm:
+                    shipping_cost_by_project_and_month[proj_acc_id][yyyy_mm] += cost
 
-                    # Avoid double-counting the same move line for the same account
-                    if ml_id in processed_ml_per_account[acc_id]:
-                        continue
+                if not date_from or (aal_date and aal_date >= date_from):
+                    assigned_by_company["all"] += cost
+                    if yyyy_mm:
+                        assigned_by_month["all"][yyyy_mm] += cost
+                    if comp_key in ("bonario", "ordinaire"):
+                        assigned_by_company[comp_key] += cost
+                        if yyyy_mm:
+                            assigned_by_month[comp_key][yyyy_mm] += cost
+            else:
+                if not date_from or (aal_date and aal_date >= date_from):
+                    unassigned_by_company["all"] += cost
+                    if yyyy_mm:
+                        unassigned_by_month["all"][yyyy_mm] += cost
+                    if comp_key in ("bonario", "ordinaire"):
+                        unassigned_by_company[comp_key] += cost
+                        if yyyy_mm:
+                            unassigned_by_month[comp_key][yyyy_mm] += cost
 
-                    dist = ml.get("analytic_distribution")
-                    if not self._is_shipping_distribution(dist):
-                        continue
+                    unassigned_items.append({
+                        "aal_id": line.get("id"),
+                        "date": aal_date,
+                        "month": yyyy_mm,
+                        "move_id": relation_id(ml.get("move_id")),
+                        "move_name": relation_name(ml.get("move_id")) or relation_name(line.get("move_line_id")) or "",
+                        "ref": ml.get("ref") or line.get("ref") or "",
+                        "partner_name": relation_name(ml.get("partner_id")) or relation_name(line.get("partner_id")) or "",
+                        "name": line.get("name") or ml.get("name") or "",
+                        "amount": as_money(cost),
+                        "shipping_account_id": ship_acc_id,
+                        "shipping_account_name": ship_acc_name,
+                        "company_key": comp_key,
+                        "company_name": comp_name,
+                        "is_po": is_po,
+                    })
 
-                    processed_ml_per_account[acc_id].add(ml_id)
-                    balance = float(ml.get("balance") or 0)
-                    shipping_cost_by_project[acc_id] = shipping_cost_by_project.get(acc_id, 0.0) + balance
-
-                    ml_date = ml.get("date")
-                    if ml_date and len(ml_date) >= 7:
-                        yyyy_mm = ml_date[:7]
-                        shipping_cost_by_project_and_month[acc_id][yyyy_mm] += balance
+        # S5: Draft shipping bills (separated into shipping_draft, never added to shipping_cost)
+        try:
+            draft_lines = self.client.search_read(
+                "account.move.line",
+                [
+                    ["parent_state", "=", "draft"],
+                    ["move_type", "in", ["in_invoice", "in_refund", "in_receipt", "entry"]],
+                ],
+                [
+                    "id",
+                    "date",
+                    "name",
+                    "move_id",
+                    "parent_state",
+                    "move_type",
+                    "balance",
+                    "purchase_line_id",
+                    "company_id",
+                    "analytic_distribution",
+                ],
+                limit=1000,
+            )
+            for dline in draft_lines:
+                dist = dline.get("analytic_distribution")
+                if isinstance(dist, str):
+                    try:
+                        dist = json.loads(dist)
+                    except Exception:
+                        dist = None
+                if not isinstance(dist, dict):
+                    continue
+                if not self._is_shipping_distribution(dist):
+                    continue
+                balance = as_decimal(dline.get("balance"))
+                if balance == 0:
+                    continue
+                for raw_key, pct in dist.items():
+                    key_ids = self._parse_analytic_account_ids(raw_key)
+                    if key_ids & shipping_id_set:
+                        for target_acc in key_ids - shipping_id_set:
+                            share = balance * as_decimal(pct) / Decimal("100")
+                            shipping_draft_by_project[target_acc] += share
         except Exception as e:
-            logger.error(f"Error precalculating shipping costs in dashboard fetch: {e}", exc_info=True)
+            logger.warning(f"Failed to query draft shipping bills: {e}")
 
-        # Convert defaultdict of defaultdict to standard dict of dicts for serialization
-        standardized_by_month = {}
-        for acc_id, months in shipping_cost_by_project_and_month.items():
-            standardized_by_month[acc_id] = dict(months)
+        company_summary: dict[str, dict[str, Any]] = {}
+        for c_key in ("all", "bonario", "ordinaire"):
+            assigned_val = as_money(assigned_by_company[c_key])
+            unassigned_val = as_money(unassigned_by_company[c_key])
+            all_months = sorted(
+                set(assigned_by_month[c_key].keys()) | set(unassigned_by_month[c_key].keys())
+            )
+            by_month_dict: dict[str, dict[str, float]] = {}
+            for m in all_months:
+                m_assigned = as_money(assigned_by_month[c_key].get(m, Decimal("0")))
+                m_unassigned = as_money(unassigned_by_month[c_key].get(m, Decimal("0")))
+                if m_assigned != 0 or m_unassigned != 0:
+                    by_month_dict[m] = {
+                        "assigned": m_assigned,
+                        "unassigned": m_unassigned,
+                        "total": as_money(Decimal(str(m_assigned)) + Decimal(str(m_unassigned))),
+                    }
+            company_summary[c_key] = {
+                "shipping_total": assigned_val,
+                "shipping_unassigned_total": unassigned_val,
+                "shipping_company_total": as_money(Decimal(str(assigned_val)) + Decimal(str(unassigned_val))),
+                "shipping_by_month": by_month_dict,
+            }
 
-        return shipping_cost_by_project, standardized_by_month
+        unassigned_items.sort(key=lambda item: (item.get("date") or "", item.get("aal_id") or 0), reverse=True)
+
+        result = {
+            "by_project": {k: as_money(v) for k, v in shipping_cost_by_project.items()},
+            "po_by_project": {k: as_money(v) for k, v in shipping_po_by_project.items()},
+            "non_po_by_project": {k: as_money(v) for k, v in shipping_non_po_by_project.items()},
+            "draft_by_project": {k: as_money(v) for k, v in shipping_draft_by_project.items()},
+            "by_project_and_month": {
+                acc_id: {m: as_money(val) for m, val in months.items() if val != 0}
+                for acc_id, months in shipping_cost_by_project_and_month.items()
+            },
+            "company_summary": company_summary,
+            "unassigned_items": unassigned_items,
+            "date_from": date_from,
+        }
+        self._latest_shipping_data = result
+        return result
+
+    def _fetch_shipping_costs(
+        self,
+        account_ids: list[int],
+        date_from: str = "2026-01-01",
+    ) -> tuple[dict[int, float], dict[int, dict[str, float]]]:
+        data = self._fetch_shipping_data(account_ids=account_ids, date_from=date_from)
+        return data["by_project"], data["by_project_and_month"]
+
+    def get_unassigned_shipping_items(
+        self,
+        date_from: str = "2026-01-01",
+        company: str = "all",
+    ) -> dict[str, Any]:
+        date_from = self._normalize_date_from(date_from)
+        company_key = self._normalize_company_key(company)
+        data = self._fetch_shipping_data(account_ids=[], date_from=date_from)
+        items = [
+            item
+            for item in data["unassigned_items"]
+            if company_key == "all" or item.get("company_key") == company_key
+        ]
+        total_amount = sum(as_decimal(item.get("amount")) for item in items)
+        return {
+            "ok": True,
+            "date_from": date_from,
+            "company": company_key,
+            "count": len(items),
+            "total_amount": as_money(total_amount),
+            "items": items,
+        }
 
     def _fetch_projects_dashboard_from_odoo(self, date_from: str, company_key: str) -> dict[str, Any]:
         sale_orders = self._get_dashboard_sale_orders(date_from, company_key)
@@ -276,6 +603,8 @@ class DashboardService:
         # Filter: chỉ giữ sale orders có ít nhất 1 tag trong target tags
         filtered_so_ids = [so_id for so_id, tags in tag_map.items() if tags]
         if not filtered_so_ids:
+            shipping_data = self._fetch_shipping_data(account_ids=[], date_from=date_from)
+            comp_ship = shipping_data.get("company_summary", {}).get(company_key, {})
             # Không có SO nào match tags - build empty dashboard payload directly
             return {
                 "projects": [],
@@ -288,6 +617,13 @@ class DashboardService:
                     "total_cost_adjustment_amount": 0,
                     "total_gp_amount": 0,
                     "weighted_gp_percent": 0,
+                    "shipping_total": comp_ship.get("shipping_total", 0.0),
+                    "shipping_unassigned_total": comp_ship.get("shipping_unassigned_total", 0.0),
+                    "shipping_company_total": comp_ship.get("shipping_company_total", 0.0),
+                    "shipping_by_month": comp_ship.get("shipping_by_month", {}),
+                    "refund_total": 0.0,
+                    "zero_revenue_projects": 0,
+                    "data_stale": False,
                 },
                 "tag_buckets": {},
                 "tag_gp_ranks": {},
@@ -303,7 +639,9 @@ class DashboardService:
 
         # Precalculate shipping costs map for the projects
         account_ids = sorted(set(relation_id(p.get("account_id")) for p in projects if relation_id(p.get("account_id"))))
-        shipping_cost_by_project, shipping_cost_by_project_and_month = self._fetch_shipping_costs(account_ids)
+        shipping_data = self._fetch_shipping_data(account_ids=account_ids, date_from=date_from)
+        shipping_cost_by_project = shipping_data["by_project"]
+        shipping_cost_by_project_and_month = shipping_data["by_project_and_month"]
 
         rows: list[dict[str, Any]] = []
         if projects:
@@ -322,16 +660,13 @@ class DashboardService:
                         analytic_adjustments,
                         shipping_cost_by_project,
                         shipping_cost_by_project_and_month,
+                        shipping_data,
                     )
                     for project in projects
                 ]
                 for future in as_completed(futures):
-                    try:
-                        row = future.result()
-                        rows.append(row)
-                    except Exception as e:
-                        logger.error(f"Failed to build dashboard row: {e}")
-                        # Skip failed project, continue with others
+                    row = future.result()
+                    rows.append(row)
                     completed += 1
                     if completed % 50 == 0 or completed == total:
                         logger.info(f"Progress: {completed}/{total} projects")
@@ -339,7 +674,6 @@ class DashboardService:
         rows.sort(key=lambda row: (row.get("date_order") or "", row.get("sale_order_name") or "", row["project_id"]), reverse=True)
         
         # 1. Filter rows by company_key to build the company-specific subset (filtered_rows).
-        # We include rows with missing/no company_key to preserve backward compatibility.
         filtered_rows = [
             row for row in rows
             if company_key == "all" or not row.get("company_key") or row.get("company_key") == company_key
@@ -353,9 +687,10 @@ class DashboardService:
         # These are used to calculate tag statistics and ranks, which are company-independent.
         done_rows = [row for row in rows if row.get("order_state") == "Done"]
         
+        comp_ship = shipping_data.get("company_summary", {}).get(company_key)
         payload = {
             "projects": filtered_rows,
-            "summary": self._build_projects_dashboard_summary(filtered_done_rows),
+            "summary": self._build_projects_dashboard_summary(filtered_done_rows, shipping_overview=comp_ship),
             # Tag buckets and GP% distribution ranks aggregate data across ALL companies combined
             # and are unaffected by the company filter, as per UI design constraints.
             "tag_buckets": self._build_tag_buckets(done_rows),
@@ -825,6 +1160,7 @@ class DashboardService:
         analytic_adjustments: dict[int, dict[str, Any]],
         shipping_cost_by_project: dict[int, float] | None = None,
         shipping_cost_by_project_and_month: dict[int, dict[str, float]] | None = None,
+        shipping_data: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         sale_order_id = relation_id(project.get("sale_order_id"))
         sale_order = sale_orders_by_id.get(sale_order_id or 0, {})
@@ -860,9 +1196,28 @@ class DashboardService:
         )
 
         account_id = relation_id(project.get("account_id"))
+        ship_source = shipping_data or self._latest_shipping_data or {}
+        po_map = ship_source.get("po_by_project", {})
+        non_po_map = ship_source.get("non_po_by_project", {})
+        draft_map = ship_source.get("draft_by_project", {})
+
         shipping_cost = 0.0
         if shipping_cost_by_project and account_id in shipping_cost_by_project:
             shipping_cost = as_money(Decimal(str(shipping_cost_by_project[account_id])))
+
+        shipping_cost_po = 0.0
+        if account_id in po_map:
+            shipping_cost_po = as_money(Decimal(str(po_map[account_id])))
+
+        shipping_cost_non_po = 0.0
+        if account_id in non_po_map:
+            shipping_cost_non_po = as_money(Decimal(str(non_po_map[account_id])))
+        elif shipping_cost and not shipping_cost_po:
+            shipping_cost_non_po = shipping_cost
+
+        shipping_draft = 0.0
+        if account_id in draft_map:
+            shipping_draft = as_money(Decimal(str(draft_map[account_id])))
 
         shipping_cost_by_month = {}
         if shipping_cost_by_project_and_month and account_id in shipping_cost_by_project_and_month:
@@ -892,12 +1247,19 @@ class DashboardService:
             "cost_added_amount": as_money(foreign_cost_added),
             "cost_breakdown": cost_breakdown_items,
             "shipping_cost": shipping_cost,
+            "shipping_cost_po": shipping_cost_po,
+            "shipping_cost_non_po": shipping_cost_non_po,
+            "shipping_draft": shipping_draft,
             "shipping_cost_by_month": shipping_cost_by_month,
             "gp_amount": as_money(gp_amount),
             "gp_percent": gp_percent,
         }
 
-    def _build_projects_dashboard_summary(self, rows: list[dict[str, Any]]) -> dict[str, Any]:
+    def _build_projects_dashboard_summary(
+        self,
+        rows: list[dict[str, Any]],
+        shipping_overview: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         valid_rows = [row for row in rows if as_decimal(row["bg_untaxed"]) > 0]
         bg_total = sum(as_decimal(row["bg_untaxed"]) for row in valid_rows)
         native_cost_total = sum(as_decimal(row["native_expected_cost"]) for row in valid_rows)
@@ -908,6 +1270,27 @@ class DashboardService:
         if bg_total > 0:
             weighted_gp_percent = (gp_total / bg_total) * Decimal("100")
 
+        if shipping_overview is not None:
+            shipping_total = as_money(as_decimal(shipping_overview.get("shipping_total", 0)))
+            shipping_unassigned_total = as_money(as_decimal(shipping_overview.get("shipping_unassigned_total", 0)))
+            shipping_company_total = as_money(
+                as_decimal(shipping_overview.get("shipping_company_total", shipping_total + shipping_unassigned_total))
+            )
+            shipping_by_month = shipping_overview.get("shipping_by_month", {})
+        else:
+            row_ship_total = sum(as_decimal(row.get("shipping_cost", 0)) for row in rows)
+            shipping_total = as_money(row_ship_total)
+            shipping_unassigned_total = 0.0
+            shipping_company_total = shipping_total
+            by_m: dict[str, Decimal] = defaultdict(lambda: Decimal("0"))
+            for row in rows:
+                for m, val in (row.get("shipping_cost_by_month") or {}).items():
+                    by_m[m] += as_decimal(val)
+            shipping_by_month = {
+                m: {"assigned": as_money(val), "unassigned": 0.0, "total": as_money(val)}
+                for m, val in sorted(by_m.items())
+            }
+
         return {
             "total_projects": len(rows),
             "valid_project_count": len(valid_rows),
@@ -917,6 +1300,11 @@ class DashboardService:
             "total_cost_adjustment_amount": as_money(adjustment_total),
             "total_gp_amount": as_money(gp_total),
             "weighted_gp_percent": as_money(weighted_gp_percent),
+            "shipping_total": shipping_total,
+            "shipping_unassigned_total": shipping_unassigned_total,
+            "shipping_company_total": shipping_company_total,
+            "shipping_by_month": shipping_by_month,
+            "data_stale": False,
         }
 
     def _build_projects_dashboard_meta(
@@ -1176,42 +1564,84 @@ class DashboardService:
             profitability_costs,
         )
 
-        # Calculate custom cost breakdown
+        # S9: Calculate custom cost breakdown preserving exact sum(expected) == expected_cost_total
+        po_categories = {"purchase_order", "purchase_orders"}
         expense_categories = {"expense", "expenses", "vendor_bill", "vendor_bills", "other"}
         profit_items = profitability_costs.get("items", [])
+
+        po_items = [it for it in profit_items if it.get("id") in po_categories]
         expense_items = [it for it in profit_items if it.get("id") in expense_categories]
-        non_expense_items = [it for it in profit_items if it.get("id") not in expense_categories]
-        
+        other_non_expense_items = [
+            it for it in profit_items
+            if it.get("id") not in po_categories and it.get("id") not in expense_categories
+        ]
+
+        total_po_billed = sum(as_decimal(it["billed"]) for it in po_items)
+        total_po_commit = sum(as_decimal(it["open_commitment"]) for it in po_items)
+
         total_expense_billed = sum(as_decimal(it["billed"]) for it in expense_items)
         total_expense_commit = sum(as_decimal(it["open_commitment"]) for it in expense_items)
-        
-        shipping_billed = Decimal("0")
-        shipping_commit = Decimal("0")
-        
+
+        shipping_po_billed = Decimal("0")
+        shipping_po_commit = Decimal("0")
+        shipping_non_po_billed = Decimal("0")
+        shipping_non_po_commit = Decimal("0")
+
         for source in cost_model.get("cost_sources", []):
-            is_po = source.get("purchase_line_id") is not None or source.get("source") == "po_open_commitment"
-            if is_po:
+            is_ship = bool(
+                source.get("is_shipping")
+                or self._is_shipping_distribution(source.get("analytic_distribution"))
+            )
+            if not is_ship:
                 continue
 
-            dist = source.get("analytic_distribution")
-            if not self._is_shipping_distribution(dist):
-                continue
-
+            is_po = bool(
+                source.get("purchase_line_id") is not None
+                or source.get("source") == "po_open_commitment"
+            )
             amount = as_decimal(source.get("amount") or 0)
             if source.get("source") == "posted_actual_cost":
-                shipping_billed += amount
+                if is_po:
+                    shipping_po_billed += amount
+                else:
+                    shipping_non_po_billed += amount
             else:
-                shipping_commit += amount
+                if is_po:
+                    shipping_po_commit += amount
+                else:
+                    shipping_non_po_commit += amount
 
-        # Bounding removed to show actual shipping costs from move lines
+        shipping_billed = shipping_po_billed + shipping_non_po_billed
+        shipping_commit = shipping_po_commit + shipping_non_po_commit
         shipping_expected = shipping_billed + shipping_commit
-        
-        other_billed = max(Decimal("0"), total_expense_billed - shipping_billed)
-        other_commit = max(Decimal("0"), total_expense_commit - shipping_commit)
-        other_expected = other_billed + other_commit
-        
-        custom_breakdown = []
-        for it in non_expense_items:
+
+        custom_breakdown: list[dict[str, Any]] = []
+
+        if po_items or (shipping_po_billed != 0 or shipping_po_commit != 0):
+            if po_items:
+                adj_po_billed = total_po_billed - shipping_po_billed
+                adj_po_commit = total_po_commit - shipping_po_commit
+                adj_po_expected = adj_po_billed + adj_po_commit
+                po_label = po_items[0].get("label", po_items[0]["id"])
+                po_id = po_items[0]["id"]
+                if adj_po_billed != 0 or adj_po_commit != 0 or adj_po_expected != 0:
+                    custom_breakdown.append({
+                        "id": po_id,
+                        "label": po_label,
+                        "billed": as_money(adj_po_billed),
+                        "open_commitment": as_money(adj_po_commit),
+                        "expected": as_money(adj_po_expected),
+                    })
+                unabsorbed_po_billed = Decimal("0")
+                unabsorbed_po_commit = Decimal("0")
+            else:
+                unabsorbed_po_billed = shipping_po_billed
+                unabsorbed_po_commit = shipping_po_commit
+        else:
+            unabsorbed_po_billed = Decimal("0")
+            unabsorbed_po_commit = Decimal("0")
+
+        for it in other_non_expense_items:
             custom_breakdown.append({
                 "id": it["id"],
                 "label": it.get("label", it["id"]),
@@ -1219,8 +1649,8 @@ class DashboardService:
                 "open_commitment": as_money(as_decimal(it["open_commitment"])),
                 "expected": as_money(as_decimal(it["expected"])),
             })
-            
-        if shipping_expected != 0:
+
+        if shipping_billed != 0 or shipping_commit != 0 or shipping_expected != 0:
             custom_breakdown.append({
                 "id": "shipping_cost",
                 "label": "Chi phí vận chuyển",
@@ -1228,8 +1658,12 @@ class DashboardService:
                 "open_commitment": as_money(shipping_commit),
                 "expected": as_money(shipping_expected),
             })
-            
-        if other_expected != 0:
+
+        other_billed = total_expense_billed - shipping_non_po_billed - unabsorbed_po_billed
+        other_commit = total_expense_commit - shipping_non_po_commit - unabsorbed_po_commit
+        other_expected = other_billed + other_commit
+
+        if other_billed != 0 or other_commit != 0 or other_expected != 0:
             custom_breakdown.append({
                 "id": "other_expense",
                 "label": "Chi phí khác",

@@ -78,7 +78,9 @@ class ShippingDetectionTest(unittest.TestCase):
         for sid in sc_ids:
             self.assertIn(sid, ids, f"SC shipping account {sid} not in dynamic whitelist")
         for bd_id in {506, 1427}:
-            self.assertNotIn(bd_id, ids, f"BD shipping account {bd_id} leaked into whitelist")
+            self.assertIn(bd_id, ids, f"BD shipping account {bd_id} must be included per Rule S1(c)")
+        for excluded_id in {1439, 568, 510}:
+            self.assertNotIn(excluded_id, ids, f"Excluded non-shipping account {excluded_id} leaked into whitelist")
 
     def test_dynamic_discovery_uses_fallback_when_search_fails(self):
         class BrokenClient:
