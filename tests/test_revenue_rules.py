@@ -336,7 +336,7 @@ class RevenueRulesTest(unittest.TestCase):
         self.assertEqual(payload["summary"].get("refund_total"), 15_000_000.0)
 
     def test_b03_foreign_currency_conversion_and_no_silent_zero_on_failure(self) -> None:
-        """B-03: Foreign currency converts to VND via rate/_convert, and conversion failure raises or flags instead of silently dropping to 0."""
+        """B-03: Foreign currency converts to VND via res.currency.rate, and conversion failure raises or flags instead of silently dropping to 0."""
         records = build_base_synthetic_records()
         records["purchase.order.line"] = [
             {
@@ -355,21 +355,21 @@ class RevenueRulesTest(unittest.TestCase):
             }
         ]
 
-        # 1. Successful conversion: 1,000 USD -> 25,400,000 VND
-        client_ok = SyntheticOdooClient(
-            records=records,
-            conversions={2: Decimal("25400000")},
-        )
+        # 1. Successful conversion from res.currency.rate (res.currency._convert is
+        #    private on Odoo.com and must not be called): 1,000 USD -> 25,400,000 VND
+        records_ok = dict(records)
+        records_ok["res.currency.rate"] = [
+            {"id": 1, "currency_id": [2, "USD"], "name": "2026-01-01", "rate": 1 / 25_400, "company_id": False},
+        ]
+        client_ok = SyntheticOdooClient(records=records_ok)
         service_ok = self._make_service(client_ok)
         po_sources, _ = service_ok._get_po_open_commitments(77, set())
         self.assertEqual(len(po_sources), 1)
-        self.assertEqual(po_sources[0]["amount"], Decimal("25400000"))
+        self.assertEqual(round(po_sources[0]["amount"], 2), Decimal("25400000.00"))
+        self.assertFalse(any(c[0] == "call_method" and c[1] == "res.currency" for c in client_ok.calls))
 
-        # 2. Failed conversion: OdooAPIError on res.currency._convert must NOT silently return empty 0 commitment
-        client_err = SyntheticOdooClient(
-            records=records,
-            conversions={2: OdooAPIError("Currency rate missing", model="res.currency", method="_convert")},
-        )
+        # 2. Failed conversion (no USD rate) must NOT silently return empty 0 commitment
+        client_err = SyntheticOdooClient(records=records)
         service_err = self._make_service(client_err)
         raised = False
         sources_err = []

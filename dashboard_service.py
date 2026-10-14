@@ -141,6 +141,11 @@ class DashboardService:
         self._shipping_account_ids_lock = Lock()
         self._shipping_account_ids_refresh_at: float = 0.0
         self._latest_shipping_data: dict[str, Any] = {}
+        # res.currency._convert is private and cannot be called over RPC on Odoo.com,
+        # so currency conversion reads res.currency.rate once per (currency, company).
+        self._company_currency_ids: dict[int, int | None] = {}
+        self._currency_rates: dict[tuple[int, int], tuple[float, list[tuple[str, Decimal]]]] = {}
+        self._currency_lock = Lock()
 
     def test_connection(self) -> dict[str, Any]:
         return self.client.test_connection()
@@ -2655,7 +2660,12 @@ class DashboardService:
                 line.get("date_planned"),
             )
             if amount is None:
-                continue
+                # Never drop a foreign-currency commitment silently
+                raise OdooAPIError(
+                    f"Missing currency rate for {relation_name(line.get('currency_id'))} on purchase line {line['id']}.",
+                    model="res.currency.rate",
+                    method="search_read",
+                )
             if isinstance(excluded_purchase_line_ids, dict) and line["id"] in excluded_purchase_line_ids:
                 draft_covered = as_decimal(excluded_purchase_line_ids[line["id"]])
                 amount = amount - draft_covered
@@ -2700,23 +2710,63 @@ class DashboardService:
         if not company_currency_id or company_currency_id == currency_id:
             return amount
 
-        converted = self.client.call_method(
-            "res.currency",
-            "_convert",
-            [[currency_id], float(amount), company_currency_id, company_id, date or datetime.now().date().isoformat(), True],
-        )
-        return as_decimal(converted)
+        on_date = str(date or datetime.now().date().isoformat())[:10]
+        rate_from = self._get_currency_rate(currency_id, company_id, on_date)
+        # The company currency is normally the base currency without rate rows (rate 1)
+        rate_to = self._get_currency_rate(company_currency_id, company_id, on_date) or Decimal("1")
+        if not rate_from:
+            logger.warning(
+                f"No currency rate for currency {currency_id} -> {company_currency_id} "
+                f"(company {company_id}) on {on_date}; amount left unconverted."
+            )
+            return None
+        # Same formula as Odoo's res.currency._get_conversion_rate: to_rate / from_rate
+        return amount * rate_to / rate_from
 
     def _get_company_currency_id(self, company_id: int) -> int | None:
+        with self._currency_lock:
+            if company_id in self._company_currency_ids:
+                return self._company_currency_ids[company_id]
         companies = self.client.search_read(
             "res.company",
             [["id", "=", company_id]],
             ["currency_id"],
             limit=1,
         )
-        if not companies:
+        currency_id = relation_id(companies[0].get("currency_id")) if companies else None
+        with self._currency_lock:
+            self._company_currency_ids[company_id] = currency_id
+        return currency_id
+
+    def _get_currency_rate(self, currency_id: int, company_id: int, on_date: str) -> Decimal | None:
+        """Rate in effect on `on_date` (latest rate dated on/before it, company-specific
+        rates first). None when the currency has no rate at all."""
+        key = (currency_id, company_id)
+        now = time.time()
+        with self._currency_lock:
+            cached = self._currency_rates.get(key)
+        if cached is None or now - cached[0] > 6 * 3600:
+            rows = self.client.search_read(
+                "res.currency.rate",
+                [["currency_id", "=", currency_id], "|", ["company_id", "=", company_id], ["company_id", "=", False]],
+                ["name", "rate", "company_id"],
+            )
+            company_rates = [r for r in rows if relation_id(r.get("company_id")) == company_id]
+            chosen = company_rates or rows
+            rates = sorted(
+                (str(r.get("name") or "")[:10], as_decimal(r.get("rate")))
+                for r in chosen
+                if r.get("rate")
+            )
+            cached = (now, rates)
+            with self._currency_lock:
+                self._currency_rates[key] = cached
+        rates = cached[1]
+        if not rates:
             return None
-        return relation_id(companies[0].get("currency_id"))
+        applicable = [rate for rate_date, rate in rates if rate_date <= on_date]
+        # Before the first recorded rate Odoo falls back to the oldest one
+        return applicable[-1] if applicable else rates[0][1]
 
     def _get_project_analytic_entries(self, project: dict[str, Any]) -> list[dict[str, Any]]:
         account_id = relation_id(project.get("account_id"))
