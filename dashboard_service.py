@@ -8,7 +8,7 @@ import os
 import re
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from threading import Lock
 from time import monotonic
@@ -671,12 +671,21 @@ class DashboardService:
                     if completed % 50 == 0 or completed == total:
                         logger.info(f"Progress: {completed}/{total} projects")
 
+        row_so_counts = Counter(
+            row.get("sale_order_id")
+            for row in rows
+            if row.get("sale_order_id")
+        )
+        for row in rows:
+            so_id = row.get("sale_order_id")
+            row["shared_so"] = bool(so_id and row_so_counts[so_id] > 1)
+
         rows.sort(key=lambda row: (row.get("date_order") or "", row.get("sale_order_name") or "", row["project_id"]), reverse=True)
         
         # 1. Filter rows by company_key to build the company-specific subset (filtered_rows).
         filtered_rows = [
             row for row in rows
-            if company_key == "all" or not row.get("company_key") or row.get("company_key") == company_key
+            if company_key == "all" or row.get("company_key") == company_key
         ]
         
         # 2. Extract completed projects (Order State = Done) within the selected company scope.
@@ -688,9 +697,14 @@ class DashboardService:
         done_rows = [row for row in rows if row.get("order_state") == "Done"]
         
         comp_ship = shipping_data.get("company_summary", {}).get(company_key)
+        refund_total = self._fetch_refund_total(sale_orders_by_id, filtered_rows, date_from, company_key)
         payload = {
             "projects": filtered_rows,
-            "summary": self._build_projects_dashboard_summary(filtered_done_rows, shipping_overview=comp_ship),
+            "summary": self._build_projects_dashboard_summary(
+                filtered_done_rows,
+                shipping_overview=comp_ship,
+                refund_total=refund_total,
+            ),
             # Tag buckets and GP% distribution ranks aggregate data across ALL companies combined
             # and are unaffected by the company filter, as per UI design constraints.
             "tag_buckets": self._build_tag_buckets(done_rows),
@@ -849,6 +863,59 @@ class DashboardService:
         except ValueError as exc:
             raise ValueError("date_from must use YYYY-MM-DD format.") from exc
 
+    def _date_from_utc_boundary(self, date_from: str) -> str:
+        normalized = self._normalize_date_from(date_from)
+        dt_date = datetime.fromisoformat(normalized).date()
+        ict_tz = timezone(timedelta(hours=7))
+        dt_ict = datetime(dt_date.year, dt_date.month, dt_date.day, 0, 0, 0, tzinfo=ict_tz)
+        return dt_ict.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+    def _allowed_sale_order_states(self) -> set[str]:
+        raw = os.getenv("ALLOWED_SO_STATES", "sale,done")
+        states = {s.strip().lower() for s in raw.split(",") if s.strip()}
+        return states or {"sale", "done"}
+
+    def _fetch_refund_total(
+        self,
+        sale_orders_by_id: dict[int, dict[str, Any]],
+        filtered_rows: list[dict[str, Any]],
+        date_from: str,
+        company_key: str,
+    ) -> Decimal:
+        so_names = {
+            str(row.get("sale_order_name") or "").strip()
+            for row in filtered_rows
+            if row.get("sale_order_name")
+        }
+        try:
+            moves = self.client.search_read(
+                "account.move",
+                [
+                    ["move_type", "=", "out_refund"],
+                    ["state", "=", "posted"],
+                    ["date", ">=", date_from],
+                ],
+                ["id", "name", "invoice_origin", "amount_untaxed", "amount_untaxed_signed", "company_id", "date"],
+                limit=1000,
+            )
+            if moves:
+                total = Decimal("0")
+                for m in moves:
+                    m_comp = self._company_key_from_ref(m.get("company_id"))
+                    if company_key != "all" and m_comp != company_key:
+                        continue
+                    origin = str(m.get("invoice_origin") or "").strip()
+                    if origin and so_names and not any(name in origin for name in so_names):
+                        continue
+                    amt = as_decimal(m.get("amount_untaxed"))
+                    if amt == 0:
+                        amt = abs(as_decimal(m.get("amount_untaxed_signed")))
+                    total += abs(amt)
+                return total
+        except Exception as e:
+            logger.debug(f"Could not fetch account.move out_refund summary: {e}")
+        return Decimal("0")
+
     def _normalize_company_key(self, company: str | None) -> str:
         normalized = normalized_text(company or "all").strip()
         for key, scope in COMPANY_SCOPES.items():
@@ -872,12 +939,15 @@ class DashboardService:
         return None
 
     def _get_dashboard_sale_orders(self, date_from: str, company_key: str) -> list[dict[str, Any]]:
+        date_from_utc = self._date_from_utc_boundary(date_from)
         fields = [
             "id",
             "name",
+            "state",
             "partner_id",
             "date_order",
             "amount_untaxed",
+            "currency_id",
             "x_sale_order_tag_ids",
             "x_studio_selection_field_q4_1imrcsjj8",
             "user_id",
@@ -893,7 +963,7 @@ class DashboardService:
         if not companies:
             sale_orders = self.client.search_read(
                 "sale.order",
-                [["date_order", ">=", date_from]],
+                [["date_order", ">=", date_from_utc]],
                 fields,
             )
         else:
@@ -907,7 +977,7 @@ class DashboardService:
                         self.client.call_method,
                         "sale.order",
                         "search_read",
-                        [[["date_order", ">=", date_from], ["company_id", "=", c_id]]],
+                        [[["date_order", ">=", date_from_utc], ["company_id", "=", c_id]]],
                         {
                             "fields": fields,
                             "context": {"allowed_company_ids": [c_id]}
@@ -919,7 +989,7 @@ class DashboardService:
                 no_company_future = executor.submit(
                     self.client.search_read,
                     "sale.order",
-                    [["date_order", ">=", date_from], ["company_id", "=", False]],
+                    [["date_order", ">=", date_from_utc], ["company_id", "=", False]],
                     fields,
                 )
                 futures[no_company_future] = False
@@ -944,10 +1014,16 @@ class DashboardService:
                 seen_ids.add(order["id"])
                 dedup_sale_orders.append(order)
         
-        # Filter out sale orders owned by the excluded Hai Yen sales account.
+        allowed_states = self._allowed_sale_order_states()
+        # Filter out sale orders owned by excluded salespersons or in non-allowed states (cancel/draft).
         return [
             order for order in dedup_sale_orders
             if not self._is_excluded_salesperson(order)
+            and (
+                order.get("state") is None
+                or order.get("state") is False
+                or str(order.get("state")).strip().lower() in allowed_states
+            )
         ]
 
     def _sale_order_matches_company(self, order: dict[str, Any], company_key: str) -> bool:
@@ -1215,7 +1291,20 @@ class DashboardService:
     ) -> dict[str, Any]:
         sale_order_id = relation_id(project.get("sale_order_id"))
         sale_order = sale_orders_by_id.get(sale_order_id or 0, {})
-        bg_untaxed = as_decimal(sale_order.get("amount_untaxed"))
+        raw_bg_untaxed = as_decimal(sale_order.get("amount_untaxed"))
+        so_currency_id = relation_id(sale_order.get("currency_id"))
+        so_company_id = relation_id(sale_order.get("company_id")) or relation_id(project.get("company_id"))
+        if so_currency_id and so_company_id and raw_bg_untaxed != 0:
+            converted_bg = self._convert_to_company_currency(
+                raw_bg_untaxed,
+                so_currency_id,
+                so_company_id,
+                str(sale_order.get("date_order") or "")[:10] or None,
+            )
+            bg_untaxed = converted_bg if converted_bg is not None else raw_bg_untaxed
+        else:
+            bg_untaxed = raw_bg_untaxed
+
         profitability_costs = self._get_profitability_costs(project["id"])
         native_expected_cost = as_decimal(
             profitability_costs["expected_cost_total"]
@@ -1283,6 +1372,7 @@ class DashboardService:
             "x_studio_giai_trinh": project.get("x_studio_giai_trinh") or "",
             "sale_order_id": sale_order_id,
             "sale_order_name": sale_order.get("name") or relation_name(project.get("sale_order_id")),
+            "shared_so": False,
             "customer": relation_name(sale_order.get("partner_id")) or relation_name(project.get("partner_id")),
             "date_order": sale_order.get("date_order"),
             "company_key": company_key,
@@ -1310,12 +1400,26 @@ class DashboardService:
         self,
         rows: list[dict[str, Any]],
         shipping_overview: dict[str, Any] | None = None,
+        refund_total: Decimal | float = Decimal("0"),
     ) -> dict[str, Any]:
         valid_rows = [row for row in rows if as_decimal(row["bg_untaxed"]) > 0]
-        bg_total = sum(as_decimal(row["bg_untaxed"]) for row in valid_rows)
-        native_cost_total = sum(as_decimal(row["native_expected_cost"]) for row in valid_rows)
-        adjusted_cost_total = sum(as_decimal(row.get("adjusted_expected_cost", row["native_expected_cost"])) for row in valid_rows)
-        adjustment_total = sum(as_decimal(row.get("cost_adjustment_amount")) for row in valid_rows)
+        zero_revenue_projects = sum(1 for row in rows if as_decimal(row["bg_untaxed"]) <= 0)
+
+        # A-03: Deduplicate bg_untaxed when multiple projects share the same sale_order_id
+        seen_so_ids: set[int] = set()
+        bg_total = Decimal("0")
+        for row in valid_rows:
+            so_id = row.get("sale_order_id")
+            if so_id is not None:
+                if so_id in seen_so_ids:
+                    continue
+                seen_so_ids.add(so_id)
+            bg_total += as_decimal(row["bg_untaxed"])
+
+        # E-02: Sum costs across ALL Done rows (including zero-revenue warranty/sample projects)
+        native_cost_total = sum(as_decimal(row["native_expected_cost"]) for row in rows)
+        adjusted_cost_total = sum(as_decimal(row.get("adjusted_expected_cost", row["native_expected_cost"])) for row in rows)
+        adjustment_total = sum(as_decimal(row.get("cost_adjustment_amount")) for row in rows)
         gp_total = bg_total - adjusted_cost_total
         weighted_gp_percent = Decimal("0")
         if bg_total > 0:
@@ -1345,7 +1449,9 @@ class DashboardService:
         return {
             "total_projects": len(rows),
             "valid_project_count": len(valid_rows),
+            "zero_revenue_projects": zero_revenue_projects,
             "total_bg_untaxed": as_money(bg_total),
+            "refund_total": as_money(as_decimal(refund_total)),
             "total_native_expected_cost": as_money(native_cost_total),
             "total_adjusted_expected_cost": as_money(adjusted_cost_total),
             "total_cost_adjustment_amount": as_money(adjustment_total),
@@ -1489,9 +1595,9 @@ class DashboardService:
         return ">200tr"
 
     def _gp_range_label(self, gp_percent: Decimal) -> str:
-        val = int(gp_percent)
-        if val < 0:
+        if gp_percent < 0:
             return "<0%"
+        val = int(gp_percent)
         if val <= 20:
             return "0-20%"
         if val <= 40:
@@ -2473,14 +2579,11 @@ class DashboardService:
         if not company_currency_id or company_currency_id == currency_id:
             return amount
 
-        try:
-            converted = self.client.call_method(
-                "res.currency",
-                "_convert",
-                [[currency_id], float(amount), company_currency_id, company_id, date or datetime.now().date().isoformat(), True],
-            )
-        except OdooAPIError:
-            return None
+        converted = self.client.call_method(
+            "res.currency",
+            "_convert",
+            [[currency_id], float(amount), company_currency_id, company_id, date or datetime.now().date().isoformat(), True],
+        )
         return as_decimal(converted)
 
     def _get_company_currency_id(self, company_id: int) -> int | None:
