@@ -161,8 +161,8 @@ for (const mod of modules) {
 // Strip out the DOMContentLoaded event listener at the end so it doesn't auto-run loadDashboard() during context execution
 combinedCode = combinedCode.replace(/document\.addEventListener\('DOMContentLoaded'[\s\S]*\}\);?\s*$/, '');
 
-// Write to debug file
-fs.writeFileSync(path.join(__dirname, 'debug_combined.js'), combinedCode);
+// Write to debug file in /tmp to avoid polluting the repository
+fs.writeFileSync('/tmp/debug_combined.js', combinedCode);
 
 vm.createContext(sandbox);
 vm.runInContext(combinedCode, sandbox);
