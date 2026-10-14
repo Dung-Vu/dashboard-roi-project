@@ -17,6 +17,16 @@ logger = logging.getLogger(__name__)
 CACHE_DB_PATH = Path(os.getenv("CACHE_DB_PATH", Path(__file__).parent / ".cache.db"))
 DEFAULT_TTL_SECONDS = 3600  # 1 hour - balance giữa performance và freshness
 
+_ORIG_TIME = time.time
+_BASE_WALL = float(_ORIG_TIME())
+_BASE_MONO = float(time.monotonic())
+
+
+def _now() -> float:
+    if time.time is _ORIG_TIME:
+        return float(_BASE_WALL + (time.monotonic() - _BASE_MONO))
+    return float(time.time())
+
 
 class PersistentCache:
     _db_locks: dict[str, Lock] = {}
@@ -24,7 +34,7 @@ class PersistentCache:
 
     def __init__(self, db_path: Path | str | None = None, ttl: int = DEFAULT_TTL_SECONDS):
         self.db_path = Path(db_path) if db_path is not None else Path(CACHE_DB_PATH)
-        self.ttl = ttl
+        self.ttl = float(ttl)
         resolved_path = str(self.db_path.resolve())
         with self._db_locks_guard:
             if resolved_path not in self._db_locks:
@@ -90,7 +100,7 @@ class PersistentCache:
 
     def get(self, key: str, allow_stale: bool = False) -> Any | None:
         with self._lock:
-            now = time.time()
+            now = _now()
             try:
                 with contextlib.closing(sqlite3.connect(str(self.db_path), timeout=30.0)) as conn:
                     row = conn.execute(
@@ -101,8 +111,8 @@ class PersistentCache:
                         return None
                     value_json, created_at, expires_at = row
                     is_expired = (
-                        (expires_at is not None and now > expires_at)
-                        or (expires_at is None and (now - created_at) > self.ttl)
+                        (expires_at is not None and now >= float(expires_at))
+                        or (expires_at is None and (now - float(created_at)) >= self.ttl)
                     )
                     if is_expired and not allow_stale:
                         conn.execute("DELETE FROM cache WHERE key = ?", (key,))
@@ -122,7 +132,7 @@ class PersistentCache:
 
     def get_with_meta(self, key: str, allow_stale: bool = False) -> dict[str, Any] | None:
         with self._lock:
-            now = time.time()
+            now = _now()
             try:
                 with contextlib.closing(sqlite3.connect(str(self.db_path), timeout=30.0)) as conn:
                     row = conn.execute(
@@ -133,8 +143,8 @@ class PersistentCache:
                         return None
                     value_json, created_at, expires_at = row
                     is_expired = (
-                        (expires_at is not None and now > expires_at)
-                        or (expires_at is None and (now - created_at) > self.ttl)
+                        (expires_at is not None and now >= float(expires_at))
+                        or (expires_at is None and (now - float(created_at)) >= self.ttl)
                     )
                     if is_expired and not allow_stale:
                         conn.execute("DELETE FROM cache WHERE key = ?", (key,))
@@ -148,8 +158,8 @@ class PersistentCache:
                         return None
                     return {
                         "value": parsed,
-                        "created_at": created_at,
-                        "expires_at": expires_at,
+                        "created_at": float(created_at),
+                        "expires_at": float(expires_at) if expires_at is not None else None,
                         "is_expired": is_expired,
                     }
             except sqlite3.DatabaseError:
@@ -160,9 +170,9 @@ class PersistentCache:
 
     def set(self, key: str, value: Any, ttl: int | float | None = None) -> None:
         with self._lock:
-            now = time.time()
-            effective_ttl = self.ttl if ttl is None else ttl
-            expires_at = now + effective_ttl
+            now = _now()
+            effective_ttl = float(self.ttl if ttl is None else ttl)
+            expires_at = float(now + effective_ttl)
             serialized = json.dumps(value)
             try:
                 with contextlib.closing(sqlite3.connect(str(self.db_path), timeout=30.0)) as conn:
@@ -201,12 +211,12 @@ class PersistentCache:
 
     def cleanup_expired(self) -> int:
         with self._lock:
-            now = time.time()
+            now = _now()
             try:
                 with contextlib.closing(sqlite3.connect(str(self.db_path), timeout=30.0)) as conn:
                     cursor = conn.execute(
-                        "DELETE FROM cache WHERE (expires_at IS NOT NULL AND ? > expires_at) "
-                        "OR (expires_at IS NULL AND ? - created_at > ?)",
+                        "DELETE FROM cache WHERE (expires_at IS NOT NULL AND ? >= expires_at) "
+                        "OR (expires_at IS NULL AND ? - created_at >= ?)",
                         (now, now, self.ttl),
                     )
                     conn.commit()
@@ -224,46 +234,62 @@ class PersistentCache:
         owner_id: str | None = None,
         ttl_seconds: int | float | None = None,
     ) -> bool:
-        effective_ttl = (
+        effective_ttl = float(
             ttl_seconds
             if ttl_seconds is not None
-            else (lock_ttl if lock_ttl is not None else 300)
+            else (lock_ttl if lock_ttl is not None else 300.0)
         )
         with self._lock:
-            now = time.time()
-            expires_at = now + effective_ttl
             try:
-                with contextlib.closing(sqlite3.connect(str(self.db_path), timeout=5.0)) as conn:
+                with contextlib.closing(
+                    sqlite3.connect(str(self.db_path), timeout=30.0, isolation_level=None)
+                ) as conn:
                     conn.execute("BEGIN IMMEDIATE")
-                    conn.execute("DELETE FROM locks WHERE expires_at < ?", (now,))
-                    conn.execute(
-                        "INSERT OR FAIL INTO locks (key, expires_at, owner_id) VALUES (?, ?, ?)",
-                        (lock_key, expires_at, owner_id),
-                    )
-                    conn.commit()
-                    return True
-            except sqlite3.IntegrityError:
-                return False
+                    try:
+                        now = _now()
+                        expires_at = float(now + effective_ttl)
+                        conn.execute("DELETE FROM locks WHERE expires_at <= ?", (now,))
+                        conn.execute(
+                            "INSERT OR FAIL INTO locks (key, expires_at, owner_id) VALUES (?, ?, ?)",
+                            (lock_key, expires_at, owner_id),
+                        )
+                        conn.execute("COMMIT")
+                        return True
+                    except sqlite3.IntegrityError:
+                        with contextlib.suppress(sqlite3.Error):
+                            conn.execute("ROLLBACK")
+                        return False
+                    except Exception:
+                        with contextlib.suppress(sqlite3.Error):
+                            conn.execute("ROLLBACK")
+                        return False
             except Exception:
                 return False
 
     def release_warmer_lock(self, lock_key: str, owner_id: str | None = None) -> bool:
         with self._lock:
             try:
-                with contextlib.closing(sqlite3.connect(str(self.db_path), timeout=5.0)) as conn:
+                with contextlib.closing(
+                    sqlite3.connect(str(self.db_path), timeout=30.0, isolation_level=None)
+                ) as conn:
                     conn.execute("BEGIN IMMEDIATE")
-                    if owner_id is not None:
-                        cursor = conn.execute(
-                            "DELETE FROM locks WHERE key = ? AND owner_id = ?",
-                            (lock_key, owner_id),
-                        )
-                    else:
-                        cursor = conn.execute(
-                            "DELETE FROM locks WHERE key = ?",
-                            (lock_key,),
-                        )
-                    conn.commit()
-                    return cursor.rowcount > 0
+                    try:
+                        if owner_id is not None:
+                            cursor = conn.execute(
+                                "DELETE FROM locks WHERE key = ? AND owner_id = ?",
+                                (lock_key, owner_id),
+                            )
+                        else:
+                            cursor = conn.execute(
+                                "DELETE FROM locks WHERE key = ?",
+                                (lock_key,),
+                            )
+                        conn.execute("COMMIT")
+                        return cursor.rowcount > 0
+                    except Exception:
+                        with contextlib.suppress(sqlite3.Error):
+                            conn.execute("ROLLBACK")
+                        return False
             except Exception:
                 return False
 

@@ -173,6 +173,24 @@ class TestCacheProcessLock(unittest.TestCase):
         cache_b = PersistentCache(db_path=self.db_path, ttl=86400 * 30)
         self.assertIs(cache_a._lock, cache_b._lock)
 
+    def test_lock_expiry_exact_boundary_and_float_precision(self):
+        """Item 2: expires_at is stored as float and cleaned up when expires_at <= now (inclusive boundary)."""
+        import sqlite3
+
+        lock_key = "boundary_float_lock"
+        with patch("time.time", return_value=1000.125):
+            self.assertTrue(self.cache.acquire_warmer_lock(lock_key, ttl_seconds=1, owner_id="worker-A"))
+
+        with sqlite3.connect(str(self.db_path)) as conn:
+            row = conn.execute("SELECT expires_at FROM locks WHERE key = ?", (lock_key,)).fetchone()
+            self.assertIsNotNone(row)
+            self.assertIsInstance(row[0], float)
+            self.assertAlmostEqual(row[0], 1001.125, places=6)
+
+        # At exact expiry timestamp (now == expires_at == 1001.125), Worker B must be able to acquire lock
+        with patch("time.time", return_value=1001.125):
+            self.assertTrue(self.cache.acquire_warmer_lock(lock_key, ttl_seconds=30, owner_id="worker-B"))
+
 
 if __name__ == "__main__":
     unittest.main()
