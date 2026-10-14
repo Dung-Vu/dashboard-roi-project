@@ -20,8 +20,21 @@ export function renderKPISparklines(projects) {
 
     if (!Array.isArray(projects) || projects.length < 2) return;
 
-    // Filter projects that have valid metrics
-    const validProjects = projects.filter(p => p && p.bg_untaxed !== null && p.bg_untaxed !== undefined).slice(-10);
+    // Lọc dự án theo công ty đang chọn, trạng thái Done & bg_untaxed > 0, khử trùng shared_so, lấy 10 dự án mới nhất
+    const selectedCompany = state.currentCompany || state.company || 'all';
+    const seenSO = new Set();
+    const validProjects = projects
+        .filter(p => {
+            if (!p || p.order_state !== 'Done' || !(p.bg_untaxed > 0)) return false;
+            if (selectedCompany !== 'all' && p.company_key && p.company_key !== selectedCompany) return false;
+            if (p.shared_so && p.sale_order_id) {
+                if (seenSO.has(p.sale_order_id)) return false;
+                seenSO.add(p.sale_order_id);
+            }
+            return true;
+        })
+        .slice(0, 10)
+        .reverse();
     if (validProjects.length < 2) return;
 
     document.querySelectorAll('.kpi-grid > .kpi-card').forEach((card, cardIdx) => {
@@ -106,6 +119,8 @@ export function renderGPChart(tagGPRanks) {
         ranks.forEach(r => allRanges.add(r.range));
     });
     const sortedRanges = Array.from(allRanges).sort((a, b) => {
+        if (a === '<0%') return -1;
+        if (b === '<0%') return 1;
         const aMatch = a.match(/(-?\d+)/);
         const bMatch = b.match(/(-?\d+)/);
         const aNum = aMatch ? parseInt(aMatch[0], 10) : 0;
@@ -177,8 +192,10 @@ export function renderGPChart(tagGPRanks) {
                         stateFilter.value = 'Done';
                     }
                     state.pendingUIState.tag = tag;
+                    state.pendingUIState.state = 'Done';
                     state.pendingUIState.order_state = 'Done';
                     state.gpRangeFilter = range;
+                    state.revenueTierFilter = null;
 
                     applyFilters();
 
@@ -186,7 +203,7 @@ export function renderGPChart(tagGPRanks) {
                 }
             },
             onHover: (event, chartElement) => {
-                if (event.native && event.native.target) {
+                if (event && event.native && event.native.target) {
                     event.native.target.style.cursor = chartElement.length ? 'pointer' : 'default';
                 }
             },
@@ -292,7 +309,11 @@ export function renderRevenueDoughnut(tagBuckets) {
                         label: function(context) {
                             const value = context.raw;
                             const total = context.dataset.data.reduce((a, b) => a + b, 0);
-                            return ` ${context.label}: ${formatVND(value)} (${((value/total)*100).toFixed(1)}%)`;
+                            const pct = total > 0 ? ((value / total) * 100).toFixed(1) : '0.0';
+                            return ` ${context.label}: ${formatVND(value)} (${pct}%)`;
+                        },
+                        footer: function() {
+                            return 'Một đơn hàng có thể gắn nhiều Tag (tổng các Tag có thể lớn hơn tổng doanh thu công ty đã khử trùng)';
                         }
                     }
                 }
@@ -480,6 +501,8 @@ export function renderTagGPCharts(tagGPRanks) {
         ranks.forEach(r => allRanges.add(r.range));
     });
     const sortedRanges = Array.from(allRanges).sort((a, b) => {
+        if (a === '<0%') return -1;
+        if (b === '<0%') return 1;
         const aMatch = a.match(/(-?\d+)/);
         const bMatch = b.match(/(-?\d+)/);
         const aNum = aMatch ? parseInt(aMatch[0], 10) : 0;
@@ -561,7 +584,7 @@ export function renderTagGPCharts(tagGPRanks) {
                     }
                 },
                 onHover: (event, chartElement) => {
-                    if (event.native && event.native.target) {
+                    if (event && event.native && event.native.target) {
                         event.native.target.style.cursor = chartElement.length ? 'pointer' : 'default';
                     }
                 },
@@ -607,7 +630,7 @@ export function renderTagGPCharts(tagGPRanks) {
 }
 
 /**
- * Renders the full-width stacked revenue segment chart.
+ * Renders the full-width grouped revenue segment chart (stacked: false to avoid multi-tag double counting).
  */
 export function renderStackedRevenueChart(tagBuckets) {
     const canvas = document.getElementById('stackedRevenueChart');
@@ -627,6 +650,31 @@ export function renderStackedRevenueChart(tagBuckets) {
     const colorMint = style.getPropertyValue('--color-mint').trim() || '#60a5fa';
     const colorEmerald = style.getPropertyValue('--color-emerald').trim() || '#2b6cb0';
 
+    // Tính tổng doanh thu phân khúc đã khử trùng theo SO từ danh sách dự án Done có bg_untaxed > 0
+    const allProjects = state.dashboardData?.projects || [];
+    const hasProjectsData = Array.isArray(allProjects) && allProjects.length > 0;
+    const segmentDedupTotals = { '<10tr': 0, '10-100tr': 0, '100-200tr': 0, '>200tr': 0 };
+    if (hasProjectsData) {
+        const seenSO = new Set();
+        allProjects.forEach(p => {
+            if (!p || p.order_state !== 'Done' || !(p.bg_untaxed > 0)) return;
+            const soKey = p.sale_order_id ? `so:${p.sale_order_id}` : (p.sale_order_name ? `name:${p.sale_order_name}` : `proj:${p.project_id}`);
+            if (p.shared_so || p.sale_order_id) {
+                if (seenSO.has(soKey)) return;
+                seenSO.add(soKey);
+            }
+            const amount = p.bg_untaxed || 0;
+            let tier = '';
+            if (amount > 0 && amount < 10000000) tier = '<10tr';
+            else if (amount < 100000000) tier = '10-100tr';
+            else if (amount < 200000000) tier = '100-200tr';
+            else tier = '>200tr';
+            if (tier && segmentDedupTotals[tier] !== undefined) {
+                segmentDedupTotals[tier] += amount;
+            }
+        });
+    }
+
     const datasets = targetTags.map(tag => {
         const themeColor = TAG_COLORS[tag] || DEFAULT_COLOR;
         const data = tiers.map(tier => {
@@ -637,7 +685,6 @@ export function renderStackedRevenueChart(tagBuckets) {
         return {
             label: tag,
             data: data,
-            stack: 'revenue',
             backgroundColor: themeColor.border,
             borderColor: '#ffffff',
             borderWidth: 1.5,
@@ -681,7 +728,7 @@ export function renderStackedRevenueChart(tagBuckets) {
                 }
             },
             onHover: (event, chartElement) => {
-                if (event.native && event.native.target) {
+                if (event && event.native && event.native.target) {
                     event.native.target.style.cursor = chartElement.length ? 'pointer' : 'default';
                 }
             },
@@ -710,35 +757,43 @@ export function renderStackedRevenueChart(tagBuckets) {
                     callbacks: {
                         label: function(context) {
                             const dataset = context.dataset;
-                            const value = context.raw;
-                            
-                            // Calculate percentage contribution inside this segment
-                            const chart = context.chart;
+                            const value = context.raw || 0;
                             const dataIndex = context.dataIndex;
-                            let total = 0;
-                            chart.data.datasets.forEach(ds => {
-                                total += ds.data[dataIndex] || 0;
-                            });
-                            const pct = total > 0 ? ((value / total) * 100).toFixed(1) : 0;
+                            const tier = tiers[dataIndex];
+                            let total = hasProjectsData ? (segmentDedupTotals[tier] || 0) : 0;
+                            if (!total) {
+                                context.chart.data.datasets.forEach(ds => {
+                                    total += ds.data[dataIndex] || 0;
+                                });
+                            }
+                            const pct = total > 0 ? ((value / total) * 100).toFixed(1) : '0.0';
                             return ` ${dataset.label}: ${formatVND(value)} (${pct}%)`;
                         },
                         footer: function(tooltipItems) {
                             let total = 0;
                             if (tooltipItems.length > 0) {
-                                const chart = tooltipItems[0].chart;
                                 const dataIndex = tooltipItems[0].dataIndex;
-                                chart.data.datasets.forEach(ds => {
-                                    total += ds.data[dataIndex] || 0;
-                                });
+                                const tier = tiers[dataIndex];
+                                if (hasProjectsData) {
+                                    total = segmentDedupTotals[tier] || 0;
+                                } else {
+                                    const chart = tooltipItems[0].chart;
+                                    chart.data.datasets.forEach(ds => {
+                                        total += ds.data[dataIndex] || 0;
+                                    });
+                                }
                             }
-                            return `Tổng doanh thu phân khúc: ${formatVND(total)}`;
+                            return [
+                                `Tổng doanh thu phân khúc (khử trùng SO): ${formatVND(total)}`,
+                                'Lưu ý: Một đơn hàng có thể thuộc nhiều hạng mục (Tag)'
+                            ];
                         }
                     }
                 }
             },
             scales: {
                 x: {
-                    stacked: true,
+                    stacked: false,
                     ticks: {
                         color: textColorSecondary,
                         font: { family: "'Outfit', sans-serif", size: 11, weight: '600' }
@@ -746,7 +801,7 @@ export function renderStackedRevenueChart(tagBuckets) {
                     grid: { color: 'rgba(43, 108, 176, 0.04)' }
                 },
                 y: {
-                    stacked: true,
+                    stacked: false,
                     ticks: {
                         color: textColorSecondary,
                         font: { family: "'Outfit', sans-serif", size: 10, weight: '600' },
@@ -761,6 +816,26 @@ export function renderStackedRevenueChart(tagBuckets) {
     });
 }
 
+/**
+ * Helper duy nhất lấy phân bổ chi phí vận chuyển theo tháng cho 1 dự án (S11).
+ * Ưu tiên p.shipping_cost_by_month; chỉ fallback sang p.date_order nếu payload cũ hoàn toàn không có trường shipping_cost_by_month.
+ */
+export function getProjectShippingByMonth(p) {
+    if (!p) return {};
+    if (p.shipping_cost_by_month !== undefined && p.shipping_cost_by_month !== null) {
+        return p.shipping_cost_by_month;
+    }
+    if (p.date_order && p.shipping_cost) {
+        const date = new Date(p.date_order);
+        if (!isNaN(date.getTime())) {
+            const year = date.getFullYear();
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            return { [`${year}-${month}`]: p.shipping_cost };
+        }
+    }
+    return {};
+}
+
 export function renderMonthlyShippingTrendChart(projects) {
     const canvas = document.getElementById('monthlyShippingTrendChart');
     if (!canvas) return;
@@ -772,50 +847,62 @@ export function renderMonthlyShippingTrendChart(projects) {
     }
     
     const activeProjects = (projects || []);
+    const summaryByMonth = state.dashboardData?.summary?.shipping_by_month || {};
     const monthlyData = {};
+
+    const ensureMonthEntry = (key) => {
+        const parts = String(key).split('-');
+        if (parts.length !== 2) return null;
+        const year = parts[0];
+        const month = parts[1];
+        if (!monthlyData[key]) {
+            monthlyData[key] = {
+                label: `Tháng ${month}/${year}`,
+                assignedShipping: 0,
+                unassignedShipping: 0,
+                projectsInMonth: new Set()
+            };
+        }
+        return monthlyData[key];
+    };
+
+    // Tổng hợp phần "Đã gắn dự án" từ activeProjects qua helper chung getProjectShippingByMonth(p)
     activeProjects.forEach(p => {
-        const costByMonth = p.shipping_cost_by_month || {};
-        if (Object.keys(costByMonth).length > 0) {
-            Object.entries(costByMonth).forEach(([key, cost]) => {
-                const parts = key.split('-');
-                if (parts.length !== 2) return;
-                const year = parts[0];
-                const month = parts[1];
-                if (!monthlyData[key]) {
-                    monthlyData[key] = {
-                        label: `Tháng ${month}/${year}`,
-                        totalShipping: 0,
-                        projectsInMonth: new Set()
-                    };
-                }
-                monthlyData[key].totalShipping += cost || 0;
-                if (cost > 0) {
-                    monthlyData[key].projectsInMonth.add(p.project_id);
-                }
+        const costByMonth = getProjectShippingByMonth(p);
+        Object.entries(costByMonth).forEach(([key, rawCost]) => {
+            const cost = Number(rawCost) || 0;
+            if (cost === 0) return;
+            const entry = ensureMonthEntry(key);
+            if (!entry) return;
+            entry.assignedShipping += cost;
+            entry.projectsInMonth.add(p.project_id);
+        });
+    });
+
+    // Kết hợp với summary.shipping_by_month từ backend (đặc biệt cho phần "Chưa gắn dự án")
+    Object.entries(summaryByMonth).forEach(([key, info]) => {
+        if (!info) return;
+        const unassigned = Number(info.unassigned) || 0;
+        const assignedFromSummary = Number(info.assigned) || 0;
+        if (unassigned === 0 && assignedFromSummary === 0 && !monthlyData[key]) return;
+        const entry = ensureMonthEntry(key);
+        if (!entry) return;
+        if (activeProjects.length === 0 && info.assigned !== undefined) {
+            entry.assignedShipping = assignedFromSummary;
+        }
+        entry.unassignedShipping = unassigned;
+        if (Array.isArray(info.projects) && entry.projectsInMonth.size === 0) {
+            info.projects.forEach(proj => {
+                const pid = (proj && typeof proj === 'object') ? proj.project_id : proj;
+                if (pid !== undefined && pid !== null) entry.projectsInMonth.add(pid);
             });
-        } else if (p.date_order) {
-            const date = new Date(p.date_order);
-            if (isNaN(date.getTime())) return;
-            const year = date.getFullYear();
-            const month = String(date.getMonth() + 1).padStart(2, '0');
-            const key = `${year}-${month}`;
-            if (!monthlyData[key]) {
-                monthlyData[key] = {
-                    label: `Tháng ${month}/${year}`,
-                    totalShipping: 0,
-                    projectsInMonth: new Set()
-                };
-            }
-            monthlyData[key].totalShipping += p.shipping_cost || 0;
-            if (p.shipping_cost > 0) {
-                monthlyData[key].projectsInMonth.add(p.project_id);
-            }
         }
     });
     
     const sortedKeys = Object.keys(monthlyData).sort();
     const labels = sortedKeys.map(k => monthlyData[k].label);
-    const shippingData = sortedKeys.map(k => monthlyData[k].totalShipping);
+    const assignedData = sortedKeys.map(k => monthlyData[k].assignedShipping);
+    const unassignedData = sortedKeys.map(k => monthlyData[k].unassignedShipping);
     const countData = sortedKeys.map(k => monthlyData[k].projectsInMonth.size);
 
     const style = getComputedStyle(document.documentElement);
@@ -829,12 +916,13 @@ export function renderMonthlyShippingTrendChart(projects) {
             labels: labels,
             datasets: [
                 {
-                    label: 'Chi phí vận chuyển (VND)',
-                    data: shippingData,
+                    label: 'Đã gắn dự án',
+                    data: assignedData,
                     backgroundColor: 'rgba(239, 68, 68, 0.75)',
                     borderColor: '#ef4444',
                     borderWidth: 1.5,
                     borderRadius: 4,
+                    order: 2,
                     yAxisID: 'y'
                 },
                 {
@@ -848,7 +936,18 @@ export function renderMonthlyShippingTrendChart(projects) {
                     pointHoverRadius: 7,
                     fill: false,
                     tension: 0.3,
+                    order: 1,
                     yAxisID: 'y1'
+                },
+                {
+                    label: 'Chưa gắn dự án',
+                    data: unassignedData,
+                    backgroundColor: 'rgba(245, 158, 11, 0.75)',
+                    borderColor: '#f59e0b',
+                    borderWidth: 1.5,
+                    borderRadius: 4,
+                    order: 2,
+                    yAxisID: 'y'
                 }
             ]
         },
@@ -863,7 +962,9 @@ export function renderMonthlyShippingTrendChart(projects) {
                 }
             },
             onHover: (event, chartElement) => {
-                event.native.target.style.cursor = chartElement[0] ? 'pointer' : 'default';
+                if (event && event.native && event.native.target) {
+                    event.native.target.style.cursor = (chartElement && chartElement[0]) ? 'pointer' : 'default';
+                }
             },
             interaction: {
                 mode: 'index',
@@ -886,11 +987,23 @@ export function renderMonthlyShippingTrendChart(projects) {
                     bodyFont: { family: "'Outfit', sans-serif" },
                     callbacks: {
                         label: function(context) {
-                            const val = context.raw;
-                            if (context.datasetIndex === 0) {
-                                return ` Chi phí: ${new Intl.NumberFormat('vi-VN').format(val)} ₫`;
+                            const val = context.raw || 0;
+                            if (context.dataset.yAxisID === 'y1') {
+                                return ` ${context.dataset.label}: ${val} dự án`;
                             }
-                            return ` Dự án: ${val} dự án`;
+                            return ` ${context.dataset.label}: ${formatFullVND(val)}`;
+                        },
+                        footer: function(tooltipItems) {
+                            if (!tooltipItems || tooltipItems.length === 0) return '';
+                            const idx = tooltipItems[0].dataIndex;
+                            const assigned = assignedData[idx] || 0;
+                            const unassigned = unassignedData[idx] || 0;
+                            const total = assigned + unassigned;
+                            return [
+                                `Đã gắn dự án: ${formatFullVND(assigned)}`,
+                                `Chưa gắn dự án: ${formatFullVND(unassigned)}`,
+                                `Tổng chi phí vận chuyển tháng: ${formatFullVND(total)}`
+                            ];
                         }
                     }
                 }
@@ -909,9 +1022,13 @@ export function renderMonthlyShippingTrendChart(projects) {
                         color: textColorSecondary,
                         font: { family: "'Outfit', sans-serif", size: 10, weight: '600' },
                         callback: function(value) {
-                            if (value >= 1e6) return (value / 1e6).toFixed(1) + ' tr';
-                            if (value >= 1e3) return (value / 1e3).toFixed(1) + ' k';
-                            return value;
+                            const num = Number(value) || 0;
+                            const abs = Math.abs(num);
+                            const sign = num < 0 ? '-' : '';
+                            if (abs >= 1e9) return sign + (abs / 1e9).toFixed(1) + ' tỷ';
+                            if (abs >= 1e6) return sign + (abs / 1e6).toFixed(1) + ' tr';
+                            if (abs >= 1e3) return sign + (abs / 1e3).toFixed(1) + ' k';
+                            return num;
                         }
                     },
                     grid: { color: 'rgba(148,163,184,0.06)' }
@@ -938,7 +1055,7 @@ export function showMonthlyShippingDetailModal(monthKey, activeProjects) {
     if (!modal) return;
     
     // Parse monthKey like "2026-06" to show "Tháng 06/2026"
-    const parts = monthKey.split('-');
+    const parts = String(monthKey).split('-');
     const monthTitle = parts.length === 2 ? `Tháng ${parts[1]}/${parts[0]}` : monthKey;
     
     const titleEl = document.getElementById('shippingModalTitle');
@@ -946,29 +1063,15 @@ export function showMonthlyShippingDetailModal(monthKey, activeProjects) {
         titleEl.textContent = `Chi tiết chi phí vận chuyển - ${monthTitle}`;
     }
     
-    // Filter and collect projects contributing to this month
+    // Filter and collect projects contributing to this month (cùng helper getProjectShippingByMonth và giữ cả số âm cost !== 0)
     const contributors = [];
-    let totalCost = 0;
+    let totalAssignedCost = 0;
     
     (activeProjects || []).forEach(p => {
-        const costByMonth = p.shipping_cost_by_month || {};
-        let cost = 0;
+        const costByMonth = getProjectShippingByMonth(p);
+        const cost = Number(costByMonth[monthKey]) || 0;
         
-        if (costByMonth[monthKey] !== undefined) {
-            cost = costByMonth[monthKey];
-        } else if (!p.shipping_cost_by_month && p.date_order && p.shipping_cost > 0) {
-            const date = new Date(p.date_order);
-            if (!isNaN(date.getTime())) {
-                const year = date.getFullYear();
-                const month = String(date.getMonth() + 1).padStart(2, '0');
-                const key = `${year}-${month}`;
-                if (key === monthKey) {
-                    cost = p.shipping_cost;
-                }
-            }
-        }
-        
-        if (cost > 0) {
+        if (cost !== 0) {
             contributors.push({
                 project_id: p.project_id,
                 project_name: p.project_name || '',
@@ -977,14 +1080,20 @@ export function showMonthlyShippingDetailModal(monthKey, activeProjects) {
                 order_state: p.order_state || 'No state',
                 bg_untaxed: p.bg_untaxed || 0,
                 costInMonth: cost,
-                totalProjectShipping: p.shipping_cost || 0
+                totalProjectShipping: p.shipping_cost || 0,
+                shipping_cost_po: p.shipping_cost_po || 0,
+                shipping_cost_non_po: p.shipping_cost_non_po || 0,
+                shipping_draft: p.shipping_draft || 0
             });
-            totalCost += cost;
+            totalAssignedCost += cost;
         }
     });
     
     // Sort contributors descending by shipping cost in this month
     contributors.sort((a, b) => b.costInMonth - a.costInMonth);
+
+    const unassignedCost = Number(state.dashboardData?.summary?.shipping_by_month?.[monthKey]?.unassigned) || 0;
+    const totalCost = totalAssignedCost + unassignedCost;
     
     // Set summary cards
     const totalCostEl = document.getElementById('shippingModalTotalCost');
@@ -994,14 +1103,16 @@ export function showMonthlyShippingDetailModal(monthKey, activeProjects) {
     
     const totalProjectsEl = document.getElementById('shippingModalTotalProjects');
     if (totalProjectsEl) {
-        totalProjectsEl.textContent = `${contributors.length} dự án`;
+        totalProjectsEl.textContent = unassignedCost !== 0
+            ? `${contributors.length} dự án (+ Chưa gắn DA)`
+            : `${contributors.length} dự án`;
     }
     
     // Populate table body
     const tbody = document.getElementById('shippingModalTableBody');
     if (tbody) {
         tbody.innerHTML = '';
-        if (contributors.length === 0) {
+        if (contributors.length === 0 && unassignedCost === 0) {
             tbody.innerHTML = `
                 <tr>
                     <td colspan="5" style="padding: 24px; text-align: center; color: var(--color-text-secondary);">
@@ -1025,6 +1136,8 @@ export function showMonthlyShippingDetailModal(monthKey, activeProjects) {
                 const stateClass = c.order_state === 'Done' ? 'done' :
                                   c.order_state === 'In progress' ? 'progress' : 'pending';
                 const stateLabel = STATE_LABELS[c.order_state] || escapeHTML(c.order_state) || '-';
+                const shipBreakdownTooltip = `Qua PO: ${formatFullVND(c.shipping_cost_po)} | Ngoài PO: ${formatFullVND(c.shipping_cost_non_po)}${c.shipping_draft > 0 ? ' | Bill nháp: ' + formatFullVND(c.shipping_draft) : ''}`;
+                const monthCostColor = c.costInMonth < 0 ? 'var(--color-emerald)' : '#ef4444';
                 
                 tr.innerHTML = `
                     <td style="padding: 12px 16px;">
@@ -1043,21 +1156,56 @@ export function showMonthlyShippingDetailModal(monthKey, activeProjects) {
                     <td style="padding: 12px 16px; text-align: right; font-weight: 500; font-family: var(--font-heading);">
                         ${formatFullVND(c.bg_untaxed)}
                     </td>
-                    <td style="padding: 12px 16px; text-align: right; font-weight: 700; color: #ef4444; background: rgba(239, 68, 68, 0.01); font-family: var(--font-heading);">
+                    <td style="padding: 12px 16px; text-align: right; font-weight: 700; color: ${monthCostColor}; background: rgba(239, 68, 68, 0.01); font-family: var(--font-heading);" title="${escapeHTML(shipBreakdownTooltip)}">
                         ${formatFullVND(c.costInMonth)}
                     </td>
-                    <td style="padding: 12px 16px; text-align: right; font-weight: 600; color: var(--color-text-primary); font-family: var(--font-heading);">
+                    <td style="padding: 12px 16px; text-align: right; font-weight: 600; color: var(--color-text-primary); font-family: var(--font-heading);" title="${escapeHTML(shipBreakdownTooltip)}">
                         ${formatFullVND(c.totalProjectShipping)}
                     </td>
                 `;
                 tbody.appendChild(tr);
             });
+
+            if (unassignedCost !== 0) {
+                const dateFrom = document.getElementById('dateFrom')?.value || state.dashboardData?.date_from || '2026-01-01';
+                const company = state.company || 'all';
+                const csvUrl = `/api/shipping/unassigned?date_from=${encodeURIComponent(dateFrom)}&company=${encodeURIComponent(company)}&format=csv`;
+                const jsonUrl = `/api/shipping/unassigned?date_from=${encodeURIComponent(dateFrom)}&company=${encodeURIComponent(company)}`;
+                const totalUnassignedAllMonths = state.dashboardData?.summary?.shipping_unassigned_total ?? unassignedCost;
+
+                const unassignedTr = document.createElement('tr');
+                unassignedTr.style.borderTop = '2px dashed rgba(245, 158, 11, 0.35)';
+                unassignedTr.style.backgroundColor = 'rgba(245, 158, 11, 0.05)';
+                unassignedTr.innerHTML = `
+                    <td style="padding: 12px 16px;">
+                        <div style="font-weight: 700; color: #b45309; margin-bottom: 4px;">
+                            <i class="fas fa-box-open" style="margin-right: 4px;"></i> Chi phí vận chuyển chưa gắn dự án
+                        </div>
+                        <div style="display: flex; gap: 10px; font-size: 0.75rem;">
+                            <a href="${escapeHTML(csvUrl)}" target="_blank" rel="noopener noreferrer" style="color: var(--color-emerald); font-weight: 600; text-decoration: none;">
+                                <i class="fas fa-download"></i> Tải CSV chi tiết
+                            </a>
+                            <a href="${escapeHTML(jsonUrl)}" target="_blank" rel="noopener noreferrer" style="color: var(--color-text-secondary); font-weight: 500; text-decoration: none;">
+                                <i class="fas fa-external-link-alt"></i> Xem JSON
+                            </a>
+                        </div>
+                    </td>
+                    <td style="padding: 12px 16px; text-align: center;">
+                        <span class="state-badge pending">Chưa gắn DA</span>
+                    </td>
+                    <td style="padding: 12px 16px; text-align: right; color: var(--color-text-secondary);">-</td>
+                    <td style="padding: 12px 16px; text-align: right; font-weight: 700; color: #d97706; font-family: var(--font-heading);">
+                        ${formatFullVND(unassignedCost)}
+                    </td>
+                    <td style="padding: 12px 16px; text-align: right; font-weight: 600; color: var(--color-text-primary); font-family: var(--font-heading);">
+                        ${formatFullVND(totalUnassignedAllMonths)}
+                    </td>
+                `;
+                tbody.appendChild(unassignedTr);
+            }
         }
     }
     
     // Show modal
     modal.style.display = 'flex';
 }
-
-
-

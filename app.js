@@ -257,6 +257,7 @@ async function loadDashboard(refresh = false) {
         const selectedCompany = state.company || DEFAULT_COMPANY;
         state.company = selectedCompany;
         state.dashboardData = await fetchDashboard(selectedDateFrom, selectedCompany, refresh);
+        projectDetailsCache.clear();
         if (dateFromInput) dateFromInput.value = state.dashboardData.date_from || selectedDateFrom;
         if (state.gpChart) {
             state.gpChart.destroy();
@@ -364,8 +365,6 @@ async function runIncrementalSync() {
         if (indicator) indicator.style.display = 'none';
 
         if (data.ok && data.updated_projects && data.updated_projects.length > 0) {
-
-            
             let hasChanges = false;
             data.updated_projects.forEach(updatedProj => {
                 const idx = state.dashboardData.projects.findIndex(p => p.project_id === updatedProj.project_id);
@@ -376,9 +375,13 @@ async function runIncrementalSync() {
                         existing.order_state !== updatedProj.order_state ||
                         JSON.stringify(existing.tags) !== JSON.stringify(updatedProj.tags) ||
                         existing.bg_untaxed !== updatedProj.bg_untaxed ||
-                        existing.adjusted_expected_cost !== updatedProj.adjusted_expected_cost
+                        existing.adjusted_expected_cost !== updatedProj.adjusted_expected_cost ||
+                        existing.shipping_cost !== updatedProj.shipping_cost ||
+                        existing.shipping_draft !== updatedProj.shipping_draft ||
+                        JSON.stringify(existing.shipping_cost_by_month) !== JSON.stringify(updatedProj.shipping_cost_by_month)
                     ) {
                         state.dashboardData.projects[idx] = updatedProj;
+                        projectDetailsCache.delete(updatedProj.project_id);
                         hasChanges = true;
                     }
                 } else {
@@ -388,6 +391,7 @@ async function runIncrementalSync() {
             });
 
             if (hasChanges) {
+                projectDetailsCache.clear();
                 if (data.summary && Object.keys(data.summary).length > 0) state.dashboardData.summary = data.summary;
                 if (data.tag_buckets && Object.keys(data.tag_buckets).length > 0) state.dashboardData.tag_buckets = data.tag_buckets;
                 if (data.tag_gp_ranks && Object.keys(data.tag_gp_ranks).length > 0) state.dashboardData.tag_gp_ranks = data.tag_gp_ranks;
@@ -571,7 +575,14 @@ function updateAggregatedCostTable(projectId, customCostBreakdown, nativeCost) {
     const tbody = document.getElementById(`aggregated-cost-tbody-${projectId}`);
     if (!tbody) return;
 
-    if (!customCostBreakdown || customCostBreakdown.length === 0) {
+    const project = (state.dashboardData?.projects || []).find(p => p.project_id === Number(projectId));
+    const shipTotal = Number(project?.shipping_cost ?? 0);
+    const shipPO = Number(project?.shipping_cost_po ?? project?.shipping_po_cost ?? 0);
+    const shipNonPO = Number(project?.shipping_cost_non_po ?? project?.shipping_direct_cost ?? 0);
+    const shipDraft = Number(project?.shipping_draft ?? 0);
+    const hasShippingInfo = shipTotal !== 0 || shipPO !== 0 || shipNonPO !== 0 || shipDraft > 0;
+
+    if ((!customCostBreakdown || customCostBreakdown.length === 0) && !hasShippingInfo) {
         tbody.innerHTML = `<tr class="cost-empty-row">
             <td colspan="4" style="text-align:center;padding:1.5rem;color:var(--color-text-secondary);">
                 Không có chi phí phát sinh cho dự án này.
@@ -583,7 +594,7 @@ function updateAggregatedCostTable(projectId, customCostBreakdown, nativeCost) {
     let html = '';
     let tBilled = 0, tCommit = 0, tExpected = 0;
 
-    customCostBreakdown.forEach(item => {
+    (customCostBreakdown || []).forEach(item => {
         const b = item.billed ?? 0, c = item.open_commitment ?? 0, e = item.expected ?? 0;
         tBilled += b; tCommit += c; tExpected += e;
         const pct = nativeCost > 0 ? ((e / nativeCost) * 100).toFixed(1) : '0';
@@ -603,6 +614,31 @@ function updateAggregatedCostTable(projectId, customCostBreakdown, nativeCost) {
         <td style="text-align:right;padding:6px 8px;font-family:var(--font-heading);color:${tCommit > 0 ? '#d97706' : 'var(--color-text-primary)'};">${formatFullVND(tCommit)}</td>
         <td style="text-align:right;padding:6px 8px;font-family:var(--font-heading);color:var(--color-emerald);font-size:0.95rem;">${formatFullVND(tExpected)}</td>
     </tr>`;
+
+    if (hasShippingInfo) {
+        html += `<tr style="border-top:1px dashed rgba(239,68,68,0.25);background:rgba(239,68,68,0.03);">
+            <td style="padding:6px 8px;color:#ef4444;font-weight:600;">
+                <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+                    <i class="fas fa-truck" style="font-size:0.7rem;"></i>
+                    <span>Chi phí vận chuyển (Đã hạch toán)</span>
+                    <span style="font-size:0.72rem;color:var(--color-text-secondary);font-weight:500;">(Qua PO: ${formatFullVND(shipPO)} | Ngoài PO: ${formatFullVND(shipNonPO)})</span>
+                </div>
+            </td>
+            <td style="text-align:right;padding:6px 8px;font-family:var(--font-heading);color:var(--color-text-secondary);">${formatFullVND(shipTotal)}</td>
+            <td style="text-align:right;padding:6px 8px;font-family:var(--font-heading);color:var(--color-text-secondary);">0\u00a0₫</td>
+            <td style="text-align:right;padding:6px 8px;font-family:var(--font-heading);font-weight:700;color:#ef4444;">${formatFullVND(shipTotal)}</td>
+        </tr>`;
+    }
+
+    if (shipDraft > 0) {
+        html += `<tr style="border-top:1px dashed rgba(217,119,6,0.25);background:rgba(245,158,11,0.04);">
+            <td colspan="3" style="padding:5px 8px;color:#b45309;font-size:0.78rem;font-weight:500;">
+                <i class="fas fa-file-invoice" style="font-size:0.7rem;margin-right:4px;"></i>
+                Bill nháp vận chuyển <span style="font-style:italic;opacity:0.85;">(Chỉ tham khảo — không cộng vào KPI thực tế)</span>
+            </td>
+            <td style="text-align:right;padding:5px 8px;font-family:var(--font-heading);font-weight:600;color:#d97706;">${formatFullVND(shipDraft)}</td>
+        </tr>`;
+    }
 
     tbody.innerHTML = html;
 }
@@ -633,13 +669,17 @@ document.addEventListener('DOMContentLoaded', async () => {
         loadDashboard(true);
     });
 
-    document.getElementById('retryBtn')?.addEventListener('click', () => {
+    document.getElementById('syncBtn')?.addEventListener('click', () => {
         loadDashboard(true);
+    });
+
+    document.getElementById('retryBtn')?.addEventListener('click', () => {
+        loadDashboard(false);
     });
 
     document.getElementById('dateFrom')?.addEventListener('change', () => {
         saveUIState();
-        loadDashboard(true);
+        loadDashboard(false);
     });
 
     // Custom Company Selector Modal Controllers
@@ -806,7 +846,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         cell.title = currentVal || '-';
         cell.innerHTML = `
-            <div class="inline-edit-container" style="display: flex; flex-direction: column; gap: 0.5rem; width: 100%; min-width: 220px;" onclick="evt => evt.stopPropagation();">
+            <div class="inline-edit-container" style="display: flex; flex-direction: column; gap: 0.5rem; width: 100%; min-width: 220px;" onclick="event.stopPropagation()">
                 <textarea class="inline-edit-input" style="width: 100%; min-height: 80px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--color-emerald); font-size: 0.85rem; background: rgba(255, 255, 255, 0.95); color: #1e293b; font-family: inherit; resize: vertical; line-height: 1.4;" placeholder="Nhập giải trình...">${escapeHTML(currentVal)}</textarea>
                 <div class="inline-edit-actions" style="display: flex; gap: 0.5rem; justify-content: flex-end;">
                     <button class="btn-edit-cancel" style="padding: 4px 10px; font-size: 0.75rem; border-radius: 4px; background: #e2e8f0; color: #475569; border: none; cursor: pointer; font-weight: 500;">Hủy</button>

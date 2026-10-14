@@ -1,11 +1,14 @@
 import { state } from '../state.js';
 import { DEFAULT_DATE_FROM } from '../config.js';
-import { formatVND, formatPercent } from '../utils.js';
+import { formatVND, formatFullVND, formatPercent } from '../utils.js';
 
 export function renderKPIs(summary) {
+    if (!summary) return;
     document.getElementById('totalProjects').textContent = summary.total_projects;
-    document.getElementById('validProjects').textContent =
-        `${summary.valid_project_count} dự án hợp lệ`;
+    const zeroRevCount = Number(summary.zero_revenue_projects || 0);
+    document.getElementById('validProjects').textContent = zeroRevCount > 0
+        ? `${summary.valid_project_count} dự án hợp lệ (${zeroRevCount} DA 0đ)`
+        : `${summary.valid_project_count} dự án hợp lệ`;
     document.getElementById('totalBG').textContent = formatVND(summary.total_bg_untaxed);
     document.getElementById('totalCost').textContent = formatVND(summary.total_adjusted_expected_cost ?? summary.total_native_expected_cost);
     document.getElementById('totalGP').textContent = formatVND(summary.total_gp_amount);
@@ -18,6 +21,36 @@ export function renderKPIs(summary) {
         weightedGP.className = 'kpi-subtitle gp-positive';
     } else {
         weightedGP.className = 'kpi-subtitle gp-negative';
+    }
+
+    // Hiển thị các trường mới theo Hợp đồng dữ liệu Mục 3
+    const shippingAssigned = Number(summary.shipping_total ?? 0);
+    const shippingUnassigned = Number(summary.shipping_unassigned_total ?? 0);
+    const shippingCompany = Number(summary.shipping_company_total ?? (shippingAssigned + shippingUnassigned));
+
+    const shipCompanyEl = document.getElementById('shippingCompanyTotal');
+    if (shipCompanyEl) {
+        shipCompanyEl.textContent = formatVND(shippingCompany);
+        shipCompanyEl.title = `Tổng vận chuyển công ty: ${formatFullVND(shippingCompany)} (Đã gắn dự án: ${formatFullVND(shippingAssigned)} | Chưa gắn dự án: ${formatFullVND(shippingUnassigned)})`;
+    }
+    const shipBreakdownEl = document.getElementById('shippingBreakdownText');
+    if (shipBreakdownEl) {
+        shipBreakdownEl.textContent = `Đã gắn dự án: ${formatVND(shippingAssigned)} · Chưa gắn dự án: ${formatVND(shippingUnassigned)}`;
+    }
+    const zeroRevEl = document.getElementById('zeroRevenueProjects');
+    if (zeroRevEl) {
+        zeroRevEl.textContent = `${zeroRevCount} dự án`;
+    }
+    const refundEl = document.getElementById('refundTotal');
+    if (refundEl) {
+        const refundVal = Number(summary.refund_total ?? 0);
+        refundEl.textContent = formatVND(refundVal);
+        refundEl.title = formatFullVND(refundVal);
+    }
+    const staleWarnEl = document.getElementById('staleDataWarning');
+    if (staleWarnEl) {
+        const isStale = Boolean(summary.data_stale || state.dashboardData?.data_stale || state.dashboardData?.meta?.data_stale);
+        staleWarnEl.style.display = isStale ? 'inline-flex' : 'none';
     }
 }
 

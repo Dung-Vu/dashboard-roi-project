@@ -257,8 +257,11 @@
           <!-- Top Header Bar -->
           <header class="top-header glass-panel">
             <div class="header-meta">
-              <div class="status-indicator" style="display: flex; align-items: center; gap: 0.75rem;">
+              <div class="status-indicator" style="display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;">
                 <span>Đồng bộ cuối: <strong id="lastUpdated">-</strong></span>
+                <span id="staleDataWarning" style="display: none; align-items: center; padding: 2px 10px; border-radius: 99px; font-size: 0.75rem; font-weight: 600; color: #b45309; background: rgba(245, 158, 11, 0.14); border: 1px solid rgba(245, 158, 11, 0.35);">
+                  <i class="fas fa-database" style="margin-right: 5px;"></i> Đang hiển thị dữ liệu từ bộ nhớ đệm (Odoo tạm thời gián đoạn)
+                </span>
                 <span id="syncStatusIndicator" style="display: none; align-items: center; padding: 2px 8px; border-radius: 99px; font-size: 0.75rem; font-weight: 600; color: #d97706; background: rgba(217, 119, 6, 0.1); border: 1px solid rgba(217, 119, 6, 0.2);"><i class="fas fa-exclamation-triangle fa-spin" style="margin-right: 4px;"></i> Mất kết nối Odoo - Đang thử lại...</span>
               </div>
             </div>
@@ -352,6 +355,31 @@
               </div>
             </div>
 
+            <!-- Secondary KPI Summary Strip (Shipping Company Total, Refund Total, Zero Revenue Projects) -->
+            <div class="kpi-secondary-strip" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-top: 14px;">
+              <div class="scope-pill" style="justify-content: space-between; padding: 0.65rem 1rem;">
+                <div>
+                  <span class="scope-label" style="display: block; margin-bottom: 2px;"><i class="fas fa-truck" style="margin-right: 4px; color: #ef4444;"></i>Tổng vận chuyển công ty</span>
+                  <span id="shippingBreakdownText" style="font-size: 0.72rem; color: var(--color-text-secondary); font-weight: 500;">Đã gắn dự án: 0 ₫ · Chưa gắn dự án: 0 ₫</span>
+                </div>
+                <strong id="shippingCompanyTotal" style="color: #ef4444; font-size: 1.1rem;">0 ₫</strong>
+              </div>
+              <div class="scope-pill" style="justify-content: space-between; padding: 0.65rem 1rem;">
+                <div>
+                  <span class="scope-label" style="display: block; margin-bottom: 2px;"><i class="fas fa-undo-alt" style="margin-right: 4px; color: #d97706;"></i>Tổng hoàn tiền / giảm giá (CN)</span>
+                  <span style="font-size: 0.72rem; color: var(--color-text-secondary); font-weight: 500;">Hóa đơn điều chỉnh giảm (out_refund)</span>
+                </div>
+                <strong id="refundTotal" style="color: #d97706; font-size: 1.1rem;">0 ₫</strong>
+              </div>
+              <div class="scope-pill" style="justify-content: space-between; padding: 0.65rem 1rem;">
+                <div>
+                  <span class="scope-label" style="display: block; margin-bottom: 2px;"><i class="fas fa-file-circle-exclamation" style="margin-right: 4px; color: var(--color-clay);"></i>Dự án Hoàn tất doanh thu 0đ</span>
+                  <span style="font-size: 0.72rem; color: var(--color-text-secondary); font-weight: 500;">Trạng thái Hoàn tất nhưng BG Untaxed = 0</span>
+                </div>
+                <strong id="zeroRevenueProjects" style="color: var(--color-text-primary); font-size: 1.1rem;">0 dự án</strong>
+              </div>
+            </div>
+
             <div class="ops-grid">
               <section class="ops-panel glass-panel">
                 <div class="ops-panel-header">
@@ -391,17 +419,17 @@
 
           <!-- Route 2: Hiệu suất theo tags -->
           <section id="tags-route" class="route-view">
-            <!-- Stacked Revenue Segment Chart: Full-Width Card -->
+            <!-- Grouped Revenue Segment Chart: Full-Width Card -->
             <div class="section glass-panel" style="margin-bottom: 2rem; padding: 25px;">
               <h2 class="section-title" style="margin-bottom: 0.5rem; font-family: var(--font-heading); font-weight: 700;">
                 <i class="fas fa-chart-bar" aria-hidden="true" style="color: var(--color-mint); margin-right: 8px;"></i>
-                Doanh thu tích lũy theo Phân khúc giá trị (Tính theo số tiền VND)
+                Doanh thu theo Phân khúc giá trị &amp; Hạng mục Tag (Tính theo số tiền VND)
               </h2>
               <p style="font-size: 0.85rem; color: var(--color-text-secondary); margin-top: 0; margin-bottom: 1.5rem; line-height: 1.5;">
-                Thể hiện tổng số tiền doanh thu mang lại của các nhóm tag trong từng dải giá trị dự án.
+                Thể hiện doanh thu của từng nhóm Tag trong mỗi dải giá trị dự án (biểu đồ cột nhóm). <em>Một đơn hàng có thể gắn nhiều Tag (tổng các Tag có thể lớn hơn tổng doanh thu công ty đã khử trùng).</em>
               </p>
               <div class="chart-container" style="height: 320px; position: relative;">
-                <canvas id="stackedRevenueChart" aria-label="Biểu đồ cột chồng phân khúc doanh thu"></canvas>
+                <canvas id="stackedRevenueChart" aria-label="Biểu đồ cột nhóm phân khúc doanh thu theo Tag"></canvas>
               </div>
             </div>
 
@@ -666,10 +694,13 @@
                 class="section glass-panel"
                 style="margin-bottom: 0; padding: 25px; display: flex; flex-direction: column; height: 100%; box-sizing: border-box;"
               >
-                <h2 class="section-title" style="margin-bottom: 1.25rem">
+                <h2 class="section-title" style="margin-bottom: 0.5rem">
                   <i class="fas fa-chart-pie" aria-hidden="true"></i>
                   Đóng góp Doanh thu theo nhóm Tag
                 </h2>
+                <p style="font-size: 0.78rem; color: var(--color-text-secondary); margin-top: 0; margin-bottom: 1rem; line-height: 1.4;">
+                  Một đơn hàng có thể gắn nhiều Tag (tổng các Tag có thể lớn hơn tổng doanh thu công ty đã khử trùng).
+                </p>
                 <div
                   class="chart-container"
                   style="

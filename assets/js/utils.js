@@ -11,27 +11,35 @@ export function escapeHTML(str) {
 }
 
 export function formatVND(amount) {
-    if (amount === null || amount === undefined || isNaN(amount)) return '0\u00a0₫';
-    if (amount >= 1e9) {
-        return (amount / 1e9).toFixed(1) + '\u00a0tỷ';
+    if (amount === null || amount === undefined || amount === '' || typeof amount === 'boolean') return '0\u00a0₫';
+    const num = Number(amount);
+    if (!Number.isFinite(num)) return '0\u00a0₫';
+    const abs = Math.abs(num);
+    const sign = num < 0 ? '-' : '';
+    if (abs >= 1e9) {
+        return sign + (abs / 1e9).toFixed(1) + '\u00a0tỷ';
     }
-    if (amount >= 1e6) {
-        return (amount / 1e6).toFixed(1) + '\u00a0tr';
+    if (abs >= 1e6) {
+        return sign + (abs / 1e6).toFixed(1) + '\u00a0tr';
     }
-    if (amount >= 1e3) {
-        return (amount / 1e3).toFixed(1) + '\u00a0k';
+    if (abs >= 1e3) {
+        return sign + (abs / 1e3).toFixed(1) + '\u00a0k';
     }
-    return amount.toFixed(0) + '\u00a0₫';
+    return sign + abs.toFixed(0) + '\u00a0₫';
 }
 
 export function formatFullVND(amount) {
-    if (amount === null || amount === undefined || isNaN(amount)) return '0\u00a0₫';
-    return new Intl.NumberFormat('vi-VN').format(amount) + '\u00a0₫';
+    if (amount === null || amount === undefined || amount === '' || typeof amount === 'boolean') return '0\u00a0₫';
+    const num = Number(amount);
+    if (!Number.isFinite(num)) return '0\u00a0₫';
+    return new Intl.NumberFormat('vi-VN').format(num) + '\u00a0₫';
 }
 
 export function formatPercent(value) {
-    if (value === null || value === undefined || isNaN(Number(value))) return '-';
-    return Number(value).toFixed(1) + '%';
+    if (value === null || value === undefined || value === '' || typeof value === 'boolean') return '-';
+    const num = Number(value);
+    if (!Number.isFinite(num)) return '-';
+    return num.toFixed(1) + '%';
 }
 
 export function formatDate(dateStr) {
@@ -94,14 +102,20 @@ export function scrollToTableTop() {
 }
 
 export function isGPInInterval(gp_percent, intervalLabel) {
-    if (gp_percent === null || gp_percent === undefined) return false;
-    
-    // Sử dụng Math.trunc để tương thích với logic int() của Python
-    const valTrunc = Math.trunc(gp_percent);
+    if (gp_percent === null || gp_percent === undefined || gp_percent === '' || typeof gp_percent === 'boolean') return false;
+    const num = Number(gp_percent);
+    if (!Number.isFinite(num)) return false;
 
     if (intervalLabel === "<0%") {
-        return valTrunc < 0;
+        return num < 0;
     }
+    if (num < 0) {
+        return false;
+    }
+
+    // Sử dụng Math.trunc cho số không âm để tương thích với logic int() của Python
+    const valTrunc = Math.trunc(num);
+
     if (intervalLabel === "0-20%") {
         return valTrunc >= 0 && valTrunc <= 20;
     }

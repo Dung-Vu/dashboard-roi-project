@@ -149,11 +149,11 @@ export function updateFilterIndicators() {
     }
     
     if (state.gpRangeFilter && state.revenueTierFilter) {
-        clearBtn.innerHTML = `✕ Xóa bộ lọc (${state.gpRangeFilter} & Phân khúc ${state.revenueTierFilter})`;
+        clearBtn.textContent = `✕ Xóa bộ lọc (${state.gpRangeFilter} & Phân khúc ${state.revenueTierFilter})`;
     } else if (state.gpRangeFilter) {
-        clearBtn.innerHTML = `✕ Xóa bộ lọc (${state.gpRangeFilter})`;
+        clearBtn.textContent = `✕ Xóa bộ lọc (${state.gpRangeFilter})`;
     } else if (state.revenueTierFilter) {
-        clearBtn.innerHTML = `✕ Xóa bộ lọc (Phân khúc ${state.revenueTierFilter})`;
+        clearBtn.textContent = `✕ Xóa bộ lọc (Phân khúc ${state.revenueTierFilter})`;
     } else {
         clearBtn.textContent = '✕ Xóa bộ lọc';
     }
@@ -217,7 +217,7 @@ export function renderProjectsTable(projects) {
                           p.order_state === 'In progress' ? 'progress' : 'pending';
         const stateLabel = STATE_LABELS[p.order_state] || escapeHTML(p.order_state) || '-';
         const adjustedCost = p.adjusted_expected_cost ?? p.native_expected_cost;
-        const hasBreakdown = (p.cost_breakdown || []).length > 0;
+        const hasBreakdown = (p.cost_breakdown || []).length > 0 || (p.shipping_cost || 0) !== 0 || (p.shipping_draft || 0) > 0;
 
         let healthBadgeHTML = '';
         if (p.gp_percent === null || p.gp_percent === undefined || Number.isNaN(Number(p.gp_percent))) {
@@ -250,6 +250,18 @@ export function renderProjectsTable(projects) {
             saleOrderHTML = `<strong style="color: var(--color-emerald); font-family: var(--font-heading); font-size: 0.88rem;">${escapeHTML(p.sale_order_name) || '-'}</strong>`;
         }
 
+        if (p.shared_so === true) {
+            saleOrderHTML += `<span class="shared-so-badge" title="Đơn bán hàng (SO) này được gắn với nhiều dự án" style="display:inline-block;margin-left:6px;padding:1px 6px;font-size:0.68rem;font-weight:600;border-radius:6px;background:rgba(217, 119, 6, 0.12);color:#d97706;border:1px solid rgba(217, 119, 6, 0.25);vertical-align:middle;">Dùng chung BG</span>`;
+        }
+
+        const shipPO = formatFullVND(p.shipping_cost_po || 0);
+        const shipNonPO = formatFullVND(p.shipping_cost_non_po || 0);
+        const shipDraftPart = (p.shipping_draft || 0) > 0 ? ` | Bill nháp: ${formatFullVND(p.shipping_draft)}` : '';
+        const shippingTooltip = `Qua PO: ${shipPO} | Ngoài PO: ${shipNonPO}${shipDraftPart}`;
+        const shippingSubHTML = ((p.shipping_cost || 0) !== 0 || (p.shipping_draft || 0) > 0)
+            ? `<div style="font-size:0.7rem;color:var(--color-text-secondary);font-weight:500;margin-top:2px;" title="${escapeHTML(shippingTooltip)}"><i class="fas fa-truck" style="font-size:0.62rem;margin-right:3px;color:#ef4444;"></i>VC: ${formatVND(p.shipping_cost || 0)}</div>`
+            : '';
+
         const tr = document.createElement('tr');
         tr.className = 'fade-in-up';
         const indexOnPage = pageProjects.indexOf(p);
@@ -266,11 +278,12 @@ export function renderProjectsTable(projects) {
             <td><div style="display: flex; flex-wrap: wrap; gap: 0.25rem;">${(p.tags || []).map(t => `<span class="tag-badge">${escapeHTML(t)}</span>`).join('')}</div></td>
             <td><span class="state-badge ${stateClass}">${stateLabel}</span></td>
             <td class="text-right" style="font-family: var(--font-heading); font-weight: 700; color: var(--color-text-primary);">${formatFullVND(p.bg_untaxed)}</td>
-            <td class="text-right" style="font-family: var(--font-heading); font-weight: 600; color: var(--color-text-secondary);">
+            <td class="text-right" style="font-family: var(--font-heading); font-weight: 600; color: var(--color-text-secondary);" title="${escapeHTML(shippingTooltip)}">
                 <div style="display:flex;align-items:center;justify-content:flex-end;gap:4px;">
                     ${expandIcon}
                     <span>${formatFullVND(adjustedCost)}</span>
                 </div>
+                ${shippingSubHTML}
             </td>
             <td class="text-right ${gpClass}" style="font-family: var(--font-heading); font-weight: 700;">${formatFullVND(p.gp_amount)}</td>
             <td class="text-right" style="font-family: var(--font-heading); font-size: 0.825rem; vertical-align: middle;">${healthBadgeHTML}</td>
@@ -359,21 +372,29 @@ export function updateMultiSelectPanel() {
 
     let totalBG = 0;
     let totalCost = 0;
-    let totalGP = 0;
-    let weightedGPSum = 0;
-    let weightedGPCount = 0;
+    let hasSharedSODedup = false;
+    const seenSOIds = new Set();
 
     selected.forEach(p => {
-        totalBG += p.bg_untaxed || 0;
-        totalCost += (p.adjusted_expected_cost ?? p.native_expected_cost) || 0;
-        totalGP += p.gp_amount || 0;
-        if (p.gp_percent !== null && p.gp_percent !== undefined && (p.bg_untaxed || 0) > 0) {
-            weightedGPSum += p.gp_percent * p.bg_untaxed;
-            weightedGPCount += p.bg_untaxed;
+        const soId = p.sale_order_id;
+        if (soId && (p.shared_so || seenSOIds.has(soId))) {
+            if (!seenSOIds.has(soId)) {
+                seenSOIds.add(soId);
+                totalBG += p.bg_untaxed || 0;
+            } else {
+                hasSharedSODedup = true;
+            }
+        } else {
+            if (soId) seenSOIds.add(soId);
+            totalBG += p.bg_untaxed || 0;
         }
+        totalCost += (p.adjusted_expected_cost ?? p.native_expected_cost) || 0;
     });
 
-    const weightedGP = weightedGPCount > 0 ? (weightedGPSum / weightedGPCount).toFixed(1) : '-';
+    const totalGP = hasSharedSODedup
+        ? (totalBG - totalCost)
+        : selected.reduce((sum, p) => sum + (p.gp_amount ?? ((p.bg_untaxed || 0) - ((p.adjusted_expected_cost ?? p.native_expected_cost) || 0))), 0);
+    const weightedGP = totalBG > 0 ? ((totalGP / totalBG) * 100).toFixed(1) : '-';
 
     const selCountEl = document.getElementById('selectedCount');
     const selBGEl = document.getElementById('selectedTotalBG');
@@ -502,6 +523,7 @@ export function applyFilters() {
         if (searchTerm) {
             const searchFields = normalizeText([
                 p.sale_order_name,
+                p.project_name,
                 p.x_studio_giai_trinh,
                 p.customer,
             ].filter(Boolean).join(' '));
@@ -518,8 +540,9 @@ export function applyFilters() {
 
         if (state.revenueTierFilter) {
             const amount = p.bg_untaxed || 0;
+            if (amount <= 0) return false;
             let projectTier = '';
-            if (amount < 10000000) projectTier = '<10tr';
+            if (amount > 0 && amount < 10000000) projectTier = '<10tr';
             else if (amount < 100000000) projectTier = '10-100tr';
             else if (amount < 200000000) projectTier = '100-200tr';
             else projectTier = '>200tr';

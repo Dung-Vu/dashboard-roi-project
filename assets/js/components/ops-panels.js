@@ -157,8 +157,15 @@ export function renderTagLeaderboard(tagBuckets) {
             if (tagFilter) {
                 tagFilter.value = item.tag;
             }
+            const stateFilter = document.getElementById('stateFilter');
+            if (stateFilter) {
+                stateFilter.value = 'Done';
+            }
             state.pendingUIState.tag = item.tag;
+            state.pendingUIState.state = 'Done';
+            state.pendingUIState.order_state = 'Done';
             state.gpRangeFilter = null;
+            state.revenueTierFilter = null;
 
             applyFilters();
 
