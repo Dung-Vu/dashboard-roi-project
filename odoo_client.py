@@ -3,7 +3,10 @@ from __future__ import annotations
 import atexit
 import itertools
 import logging
+import os
+import re
 from typing import Any
+from urllib.parse import urlparse
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -11,6 +14,9 @@ from urllib3.util.retry import Retry
 
 
 logger = logging.getLogger(__name__)
+
+PROD_HOST = "bonario-vietnam.odoo.com"
+PROD_DB = "bonario-vietnam"
 
 
 class OdooAPIError(Exception):
@@ -23,14 +29,16 @@ class OdooAPIError(Exception):
 class OdooAPI:
     def __init__(self, url: str, db: str, user_id: int, api_key: str):
         import threading
-        base_url = url.rstrip("/")
+        base_url = (url or "").rstrip("/")
         if base_url.endswith("/jsonrpc"):
             base_url = base_url[: -len("/jsonrpc")]
 
         self.url = base_url
         self.db = db
         self.uid = user_id
+        self.user_id = user_id
         self.api_key = api_key
+        self._assert_not_prod()
         self.jsonrpc_url = f"{self.url}/jsonrpc"
         self.timeout = (5, 60)
         self.request_counter = itertools.count(1)
@@ -49,6 +57,13 @@ class OdooAPI:
         self._adapter = HTTPAdapter(pool_connections=30, pool_maxsize=30, max_retries=self._retry)
         atexit.register(self.close)
 
+    def _assert_not_prod(self) -> None:
+        if os.getenv("ODOO_BLOCK_PROD", "1") == "1":
+            url_lower = (self.url or "").strip().lower()
+            db_lower = (self.db or "").strip().lower()
+            if PROD_HOST in url_lower or db_lower == PROD_DB:
+                raise SystemExit("PROD BLOCKED")
+
     @property
     def session(self) -> requests.Session:
         if not hasattr(self._thread_local, "session"):
@@ -63,32 +78,44 @@ class OdooAPI:
     def _sanitize(self, text: str) -> str:
         if not text:
             return text
-        from urllib.parse import urlparse
-        
-        sensitive_terms = []
+
+        sensitive_terms: list[str] = []
         if self.url:
             sensitive_terms.append(self.url)
             try:
                 parsed = urlparse(self.url)
                 if parsed.netloc:
                     sensitive_terms.append(parsed.netloc)
-                    if parsed.hostname:
-                        sensitive_terms.append(parsed.hostname)
-                        parts = parsed.hostname.split(".")
-                        if len(parts) > 1:
-                            sensitive_terms.append(parts[0])
+                if parsed.hostname:
+                    sensitive_terms.append(parsed.hostname)
+                    parts = parsed.hostname.split(".")
+                    if len(parts) > 1 and len(parts[0]) >= 3:
+                        sensitive_terms.append(parts[0])
             except Exception:
                 pass
         if self.db:
-            sensitive_terms.append(self.db)
+            sensitive_terms.append(str(self.db))
         if self.api_key:
-            sensitive_terms.append(self.api_key)
-        if hasattr(self, "uid") and self.uid:
-            sensitive_terms.append(str(self.uid))
-            
-        unique_terms = sorted(list(set(term for term in sensitive_terms if term and len(term) > 3)), key=len, reverse=True)
+            sensitive_terms.append(str(self.api_key))
+
+        uid_val = getattr(self, "user_id", None) or getattr(self, "uid", None)
+        short_uid: str | None = None
+        if uid_val is not None and str(uid_val):
+            uid_str = str(uid_val)
+            if len(uid_str) >= 3:
+                sensitive_terms.append(uid_str)
+            else:
+                short_uid = uid_str
+
+        unique_terms = sorted(
+            {term for term in sensitive_terms if term},
+            key=len,
+            reverse=True,
+        )
         for term in unique_terms:
             text = text.replace(term, "********")
+        if short_uid:
+            text = re.sub(rf"\b{re.escape(short_uid)}\b", "********", text)
         return text
 
     def call_method(
@@ -98,6 +125,7 @@ class OdooAPI:
         args: list | None = None,
         kwargs: dict | None = None,
     ) -> list | dict | int | bool | None:
+        self._assert_not_prod()
         if args is None:
             args = [[]]
         if kwargs is None:

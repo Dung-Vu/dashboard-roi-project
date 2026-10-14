@@ -122,6 +122,43 @@ class TestCacheTTLRevalidationAndConnectionSafety(unittest.TestCase):
         for spy in spy_connections:
             self.assertTrue(spy.close_called, "Connection close() must be called!")
 
+    def test_cleanup_expired_on_short_ttl_instance_preserves_long_ttl_keys(self):
+        """F-05: cleanup_expired() on 1800s instance must NOT delete 30-day dashboard_payload keys."""
+        cache_long = PersistentCache(db_path=self.db_path, ttl=86400 * 30)
+        cache_short = PersistentCache(db_path=self.db_path, ttl=1800)
+
+        with patch("time.time", return_value=1000.0):
+            cache_long.set("dashboard_payload:all:2026-01-01", {"projects": [1, 2, 3]})
+            cache_short.set("profitability:999", {"billed_cost_total": "100"})
+
+        # Advance time by 2000 seconds (> 1800s short TTL, < 30 days long TTL)
+        with patch("time.time", return_value=3000.0):
+            cache_short.cleanup_expired()
+            # Short TTL key must be gone
+            self.assertIsNone(cache_short.get("profitability:999"))
+            # Long TTL key must still be intact!
+            self.assertEqual(
+                cache_long.get("dashboard_payload:all:2026-01-01"),
+                {"projects": [1, 2, 3]},
+            )
+
+    def test_corrupt_json_in_db_recovers_and_returns_none(self):
+        """F-05: Corrupted JSON in cache table is deleted and get() returns None instead of crashing."""
+        cache = PersistentCache(db_path=self.db_path, ttl=1800)
+        with sqlite3.connect(str(self.db_path)) as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO cache (key, value, created_at, expires_at) VALUES (?, ?, ?, ?)",
+                ("corrupt_key", "{not-valid-json", time.time(), time.time() + 1800),
+            )
+            conn.commit()
+
+        self.assertIsNone(cache.get("corrupt_key"))
+        # Verify the corrupt row was purged
+        with sqlite3.connect(str(self.db_path)) as conn:
+            row = conn.execute("SELECT value FROM cache WHERE key = 'corrupt_key'").fetchone()
+            self.assertIsNone(row)
+
 
 if __name__ == "__main__":
     unittest.main()
+

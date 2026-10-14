@@ -142,6 +142,38 @@ class TestCacheProcessLock(unittest.TestCase):
             self.assertIsNotNone(last_run)
             self.assertGreater(last_run["timestamp"], time.time() - 5)
 
+    def test_owner_id_prevents_releasing_other_worker_lock(self):
+        """F-05: A late worker with owner_id A must not release a lock acquired by owner_id B after expiry."""
+        lock_key = "warmer_owner_lock"
+
+        # Worker A acquires lock with short TTL
+        self.assertTrue(self.cache.acquire_warmer_lock(lock_key, ttl_seconds=1, owner_id="worker-A"))
+        time.sleep(1.1)
+
+        # Lock expired; Worker B acquires the lock
+        self.assertTrue(self.cache.acquire_warmer_lock(lock_key, ttl_seconds=30, owner_id="worker-B"))
+
+        # Worker A finishes late and attempts to release with owner_id="worker-A"
+        released_by_a = self.cache.release_warmer_lock(lock_key, owner_id="worker-A")
+        self.assertFalse(released_by_a)
+
+        # Worker C still cannot acquire because Worker B's lock is still intact
+        self.assertFalse(self.cache.acquire_warmer_lock(lock_key, ttl_seconds=30, owner_id="worker-C"))
+
+        # Worker B releases its own lock
+        released_by_b = self.cache.release_warmer_lock(lock_key, owner_id="worker-B")
+        self.assertTrue(released_by_b)
+
+        # Now Worker C can acquire
+        self.assertTrue(self.cache.acquire_warmer_lock(lock_key, ttl_seconds=30, owner_id="worker-C"))
+
+    def test_shared_lock_across_instances_with_same_db_path(self):
+        """F-05: Two PersistentCache instances pointing to the same db_path share the same threading.Lock."""
+        cache_a = PersistentCache(db_path=self.db_path, ttl=1800)
+        cache_b = PersistentCache(db_path=self.db_path, ttl=86400 * 30)
+        self.assertIs(cache_a._lock, cache_b._lock)
+
 
 if __name__ == "__main__":
     unittest.main()
+
