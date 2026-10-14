@@ -593,10 +593,14 @@ function updateAggregatedCostTable(projectId, customCostBreakdown, nativeCost) {
 
     let html = '';
     let tBilled = 0, tCommit = 0, tExpected = 0;
+    let panelGap = 0;
 
     (customCostBreakdown || []).forEach(item => {
         const b = item.billed ?? 0, c = item.open_commitment ?? 0, e = item.expected ?? 0;
-        tBilled += b; tCommit += c; tExpected += e;
+        // panel_gap: phần ship có trên sổ nhưng panel Odoo không tính -> không cộng vào tổng gốc
+        const gap = item.panel_gap ?? 0;
+        panelGap += gap;
+        tBilled += b - gap; tCommit += c; tExpected += e - gap;
         const pct = nativeCost > 0 ? ((e / nativeCost) * 100).toFixed(1) : '0';
         const label = translateCostLabel(item.label || item.id);
 
@@ -614,6 +618,14 @@ function updateAggregatedCostTable(projectId, customCostBreakdown, nativeCost) {
         <td style="text-align:right;padding:6px 8px;font-family:var(--font-heading);color:${tCommit > 0 ? '#d97706' : 'var(--color-text-primary)'};">${formatFullVND(tCommit)}</td>
         <td style="text-align:right;padding:6px 8px;font-family:var(--font-heading);color:var(--color-emerald);font-size:0.95rem;">${formatFullVND(tExpected)}</td>
     </tr>`;
+
+    if (Math.abs(panelGap) >= 1) {
+        html += `<tr>
+            <td colspan="4" style="padding:4px 8px;color:var(--color-text-secondary);font-size:0.75rem;font-style:italic;">
+                * Chi phí vận chuyển gồm ${formatFullVND(panelGap)} đã ghi sổ nhưng panel Profitability của Odoo không tính (thường do Odoo lấy số trước thuế trên phiếu chi). Tổng chi phí gốc giữ theo Odoo.
+            </td>
+        </tr>`;
+    }
 
     if (hasShippingInfo) {
         html += `<tr style="border-top:1px dashed rgba(239,68,68,0.25);background:rgba(239,68,68,0.03);">

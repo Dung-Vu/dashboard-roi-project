@@ -1861,6 +1861,12 @@ class DashboardService:
 
         shipping_billed = Decimal("0")
         shipping_commit = Decimal("0")
+        # Shipping booked in accounting but absent from the Odoo panel (e.g. the panel
+        # counts an hr.expense at its untaxed amount while the receipt books the full
+        # amount). Shown inside the shipping row so it matches the overview, but kept
+        # out of the panel total.
+        shipping_panel_gap_billed = Decimal("0")
+        shipping_panel_gap_commit = Decimal("0")
 
         for bucket, candidates in bucket_candidates.items():
             for field, is_billed in (("billed", True), ("commit", False)):
@@ -1886,6 +1892,11 @@ class DashboardService:
                                     shipping_commit += deduct
                                 if remaining <= 0:
                                     break
+                    if remaining > 0:
+                        if is_billed:
+                            shipping_panel_gap_billed += remaining
+                        else:
+                            shipping_panel_gap_commit += remaining
                 else:
                     # Negative net shipping (e.g., vendor refund): remove refund from matching section
                     for cid in candidates:
@@ -1926,17 +1937,21 @@ class DashboardService:
                 "expected": as_money(sec_expected),
             })
 
+        shipping_panel_gap = shipping_panel_gap_billed + shipping_panel_gap_commit
         if (
             abs(shipping_billed) >= TWO_DECIMALS
             or abs(shipping_commit) >= TWO_DECIMALS
             or abs(shipping_expected) >= TWO_DECIMALS
+            or abs(shipping_panel_gap) >= TWO_DECIMALS
         ):
             custom_breakdown.append({
                 "id": "shipping_cost",
                 "label": "Chi phí vận chuyển",
-                "billed": as_money(shipping_billed),
-                "open_commitment": as_money(shipping_commit),
-                "expected": as_money(shipping_expected),
+                "billed": as_money(shipping_billed + shipping_panel_gap_billed),
+                "open_commitment": as_money(shipping_commit + shipping_panel_gap_commit),
+                "expected": as_money(shipping_expected + shipping_panel_gap),
+                # Part of the row not counted in the Odoo panel total
+                "panel_gap": as_money(shipping_panel_gap),
             })
 
         return {

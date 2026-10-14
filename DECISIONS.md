@@ -45,7 +45,8 @@ Tài liệu này ghi nhận toàn bộ các quyết định nghiệp vụ và k�
 - **S9 (Bất biến cấu thành chi phí ở màn chi tiết `build_project_dashboard`)**:
   - Khấu trừ từng phần chi phí vận chuyển (`po`, `vendor_bill`, `expense`, `other`) đúng vào mục gốc tương ứng trên panel lợi nhuận của Odoo (`purchase_order`, `other_purchase_costs`/`vendor_bills`, `expenses`, `other`) nơi khoản đó được Odoo gom vào.
   - Giới hạn mức khấu trừ tối đa bằng số dư của từng mục gốc không âm để không sinh ra mục `"Chi phí khác"` bị âm giả tạo (như khi panel dùng `untaxed_amount` cho `hr.expense` còn AAL dùng `total_amount` có VAT), đồng thời bảo toàn dấu âm thực sự của các khoản giảm trừ/hoàn tiền và đảm bảo bất biến:
-    `sum(item["expected"] for item in custom_cost_breakdown) == profitability_costs["expected_cost_total"]`.
+    `sum(item["expected"] - item.get("panel_gap", 0) for item in custom_cost_breakdown) == profitability_costs["expected_cost_total"]`.
+  - Dòng "Chi phí vận chuyển" luôn hiển thị đủ số ghi sổ (bằng màn tổng quan). Phần ship không trừ được khỏi nhóm nào trong panel (ví dụ 1685: hr.expense 400.000 có VAT 8%, panel tính trước thuế 370.370, chênh 29.630) được ghi ở `panel_gap`, không cộng vào tổng chi phí gốc; UI hiện dòng ghi chú.
 
 ---
 

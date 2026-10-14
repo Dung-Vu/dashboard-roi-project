@@ -1089,7 +1089,7 @@ class ShippingRulesTest(unittest.TestCase):
 
         breakdown = detail["custom_cost_breakdown"]
         expected_total = detail["profitability_costs"]["expected_cost_total"]
-        sum_expected = round(sum(item["expected"] for item in breakdown), 2)
+        sum_expected = round(sum(item["expected"] - item.get("panel_gap", 0.0) for item in breakdown), 2)
 
         self.assertEqual(
             sum_expected,
@@ -1109,7 +1109,7 @@ class ShippingRulesTest(unittest.TestCase):
         self.assertNotIn("other_expense", by_id)
 
     def test_s9_expense_vat_discrepancy_clamped_no_negative_section(self) -> None:
-        """Item 3 (Project 1685 scenario): When AAL in_receipt shipping (858,622 with VAT) exceeds untaxed expenses panel section (828,992), no section goes negative and sum(expected) == expected_cost_total."""
+        """Item 3 (Project 1685 scenario): When AAL in_receipt shipping (858,622 with VAT) exceeds untaxed expenses panel section (828,992), no section goes negative, the shipping row shows the full 858,622 and sum(expected - panel_gap) == expected_cost_total."""
         records = build_base_synthetic_records()
         records["sale.order"] = [
             {
@@ -1203,7 +1203,7 @@ class ShippingRulesTest(unittest.TestCase):
         detail = service.build_project_dashboard(1685)
         breakdown = detail["custom_cost_breakdown"]
         expected_total = detail["profitability_costs"]["expected_cost_total"]
-        sum_expected = round(sum(item["expected"] for item in breakdown), 2)
+        sum_expected = round(sum(item["expected"] - item.get("panel_gap", 0.0) for item in breakdown), 2)
 
         self.assertEqual(sum_expected, expected_total)
         for item in breakdown:
@@ -1211,7 +1211,10 @@ class ShippingRulesTest(unittest.TestCase):
         by_id = {item["id"]: item for item in breakdown}
         self.assertEqual(by_id["purchase_order"]["expected"], 6_548_000.0)
         self.assertEqual(by_id["cost_of_goods_sold"]["expected"], 14_399_525.0)
-        self.assertEqual(by_id["shipping_cost"]["expected"], 828_992.0)
+        # Shipping row matches the overview (accounting 858,622); the 29,630 VAT the
+        # panel does not count is flagged as panel_gap and kept out of the total.
+        self.assertEqual(by_id["shipping_cost"]["expected"], 858_622.0)
+        self.assertEqual(by_id["shipping_cost"]["panel_gap"], 29_630.0)
         self.assertNotIn("expenses", by_id)
         self.assertNotIn("other_expense", by_id)
 
