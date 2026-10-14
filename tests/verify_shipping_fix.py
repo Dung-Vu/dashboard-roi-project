@@ -1,3 +1,4 @@
+import os
 """Verify shipping fix by running the patched _fetch_shipping_costs against account 1781 (O-BG-2606-0330)."""
 import sys
 from pathlib import Path
@@ -7,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from odoo_client import OdooAPI
 from dashboard_service import DashboardService
 
-client = OdooAPI("https://bonario-vietnam.odoo.com", "bonario-vietnam", 208, "80aa54434e151ac3f2002b9d85bce253853f84fa")
+client = OdooAPI("https://bonario-vietnam.odoo.com", "bonario-vietnam", 208, os.environ["ODOO_API_KEY"])
 service = DashboardService(client)
 
 ACCOUNT_ID = 1781  # O-BG-2606-0330

@@ -1,3 +1,4 @@
+import os
 """Survey shipping-related data in Odoo:
 1. All products whose internal reference / name suggests shipping
 2. All analytic accounts whose code/name suggests shipping
@@ -11,7 +12,7 @@ from collections import defaultdict, Counter
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from odoo_client import OdooAPI
 
-client = OdooAPI("https://bonario-vietnam.odoo.com", "bonario-vietnam", 208, "80aa54434e151ac3f2002b9d85bce253853f84fa")
+client = OdooAPI("https://bonario-vietnam.odoo.com", "bonario-vietnam", 208, os.environ["ODOO_API_KEY"])
 
 SHIPPING_KEYWORDS = ["ship", "vận chuyển", "vanchuyen", "phí vc", "phí vận", "phi vc", "phi van", "lalamove", "grab", "logistics", "giao hàng", "giao hang", "freight", "transport"]
 

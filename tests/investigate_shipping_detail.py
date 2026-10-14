@@ -1,3 +1,4 @@
+import os
 """Drill into the 4 skipped 'not_shipping_dist' move lines to see what costs they are."""
 import sys
 import json
@@ -9,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from odoo_client import OdooAPI
 
-client = OdooAPI("https://bonario-vietnam.odoo.com", "bonario-vietnam", 208, "80aa54434e151ac3f2002b9d85bce253853f84fa")
+client = OdooAPI("https://bonario-vietnam.odoo.com", "bonario-vietnam", 208, os.environ["ODOO_API_KEY"])
 ACCOUNT_ID = 1781
 PROJECT_ID = 1685
 SHIPPING_PARTS = {"1519", "1271"}

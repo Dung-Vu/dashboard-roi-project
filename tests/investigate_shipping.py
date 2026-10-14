@@ -1,3 +1,4 @@
+import os
 """Investigate shipping cost for O-BG-2606-0330 by multiple methods."""
 import sys
 import json
@@ -11,7 +12,7 @@ from odoo_client import OdooAPI, OdooAPIError
 ODOO_URL = "https://bonario-vietnam.odoo.com"
 ODOO_DB = "bonario-vietnam"
 ODOO_USER_ID = 208
-ODOO_API_KEY = "80aa54434e151ac3f2002b9d85bce253853f84fa"
+ODOO_API_KEY = os.environ["ODOO_API_KEY"]
 
 SHIPPING_ACCOUNT_PARTS = {"1519", "1271"}
 
