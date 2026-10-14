@@ -10,7 +10,7 @@ from unittest.mock import patch
 from cache import PersistentCache
 from config import Settings
 from dashboard_service import DashboardService
-from odoo_client import OdooAPI, OdooAPIError
+from odoo_client import OdooAPI, OdooAPIError, ProdBlockedError, PROD_HOST, PROD_DB
 from tests.fixtures.synthetic_data import (
     SYNTHETIC_CUSTOMER_ALPHA,
     SYNTHETIC_CUSTOMER_BETA,
@@ -397,13 +397,13 @@ class SyncAndSecurityRulesTest(unittest.TestCase):
                 "Unauthenticated request to /api/projects-dashboard must return 401 when app.config['TESTING'] is False!",
             )
 
-    def test_prod_guard_blocks_bonario_vietnam_odoo_com(self) -> None:
-        """Prod Guard: Initializing or calling OdooAPI with bonario-vietnam.odoo.com when ODOO_BLOCK_PROD=1 raises SystemExit('PROD BLOCKED')."""
+    def test_prod_guard_blocks_prod_host_and_db(self) -> None:
+        """Prod Guard: Initializing or calling OdooAPI with PROD_HOST/PROD_DB when ODOO_BLOCK_PROD=1 raises ProdBlockedError('PROD BLOCKED')."""
         with patch.dict(os.environ, {"ODOO_BLOCK_PROD": "1"}):
-            with self.assertRaises(SystemExit) as ctx:
+            with self.assertRaises(ProdBlockedError) as ctx:
                 api = OdooAPI(
-                    url="https://bonario-vietnam.odoo.com",
-                    db="bonario-vietnam",
+                    url=f"https://{PROD_HOST}",
+                    db=PROD_DB,
                     user_id=1,
                     api_key="dummy_key",
                 )

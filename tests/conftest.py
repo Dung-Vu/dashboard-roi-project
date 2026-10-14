@@ -6,8 +6,8 @@ from pathlib import Path
 import pytest
 import requests
 
-PROD_HOST = "bonario-vietnam.odoo.com"
-PROD_DB = "bonario-vietnam"
+from config import is_odoo_prod_blocked
+from odoo_client import PROD_DB, PROD_HOST, ProdBlockedError
 
 # Ignore standalone live investigation scripts during test discovery
 collect_ignore = [
@@ -36,14 +36,14 @@ def _assert_not_prod(url: str | None = None, db: str | None = None) -> None:
     check_url = (url or "").strip().lower()
     check_db = (db or "").strip().lower()
     if PROD_HOST in check_url or check_db == PROD_DB:
-        raise SystemExit("PROD BLOCKED")
+        raise ProdBlockedError("PROD BLOCKED")
 
 
 _orig_session_request = requests.Session.request
 
 
 def _guarded_session_request(self, method, url, *args, **kwargs):
-    if os.environ.get("ODOO_BLOCK_PROD", "1") != "0":
+    if is_odoo_prod_blocked():
         _assert_not_prod(str(url))
     return _orig_session_request(self, method, url, *args, **kwargs)
 
@@ -54,7 +54,7 @@ _orig_session_send = requests.Session.send
 
 
 def _guarded_session_send(self, request, *args, **kwargs):
-    if os.environ.get("ODOO_BLOCK_PROD", "1") != "0":
+    if is_odoo_prod_blocked():
         _assert_not_prod(str(getattr(request, "url", "")))
     return _orig_session_send(self, request, *args, **kwargs)
 

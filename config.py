@@ -39,6 +39,13 @@ def _parse_str_tuple(raw: str, default: tuple[str, ...] = ("sale",)) -> tuple[st
     return items or default
 
 
+DEFAULT_ODOO_BLOCK_PROD = "0"
+
+
+def is_odoo_prod_blocked() -> bool:
+    return os.getenv("ODOO_BLOCK_PROD", DEFAULT_ODOO_BLOCK_PROD).strip() == "1"
+
+
 @dataclass(frozen=True)
 class Settings:
     odoo_url: str
@@ -71,7 +78,7 @@ def get_settings() -> Settings:
         dashboard_password=_require_env("DASHBOARD_PASSWORD"),
         secret_key=_require_env("SECRET_KEY"),
         behind_proxy=os.getenv("BEHIND_PROXY", "0") == "1",
-        odoo_block_prod=os.getenv("ODOO_BLOCK_PROD", "0") == "1",
+        odoo_block_prod=is_odoo_prod_blocked(),
         shipping_analytic_ids=_parse_int_tuple(os.getenv("SHIPPING_ANALYTIC_IDS", "")),
         allowed_sale_order_states=_parse_str_tuple(os.getenv("ALLOWED_SO_STATES", "sale")),
     )

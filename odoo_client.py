@@ -13,10 +13,17 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 
+from config import is_odoo_prod_blocked
+
+
 logger = logging.getLogger(__name__)
 
 PROD_HOST = "bonario-vietnam.odoo.com"
 PROD_DB = "bonario-vietnam"
+
+
+class ProdBlockedError(RuntimeError):
+    """Raised when an operation targets Odoo production while ODOO_BLOCK_PROD=1."""
 
 
 class OdooAPIError(Exception):
@@ -58,11 +65,11 @@ class OdooAPI:
         atexit.register(self.close)
 
     def _assert_not_prod(self) -> None:
-        if os.getenv("ODOO_BLOCK_PROD", "1") == "1":
+        if is_odoo_prod_blocked():
             url_lower = (self.url or "").strip().lower()
             db_lower = (self.db or "").strip().lower()
             if PROD_HOST in url_lower or db_lower == PROD_DB:
-                raise SystemExit("PROD BLOCKED")
+                raise ProdBlockedError("PROD BLOCKED")
 
     @property
     def session(self) -> requests.Session:
@@ -159,6 +166,8 @@ class OdooAPI:
             )
             response.raise_for_status()
             result = response.json()
+        except ProdBlockedError:
+            raise
         except requests.exceptions.Timeout as exc:
             raise OdooAPIError("Request timeout", model=model, method=method) from None
         except requests.exceptions.ConnectionError as exc:

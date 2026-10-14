@@ -5,8 +5,8 @@ import os
 import unittest
 from unittest.mock import MagicMock, patch
 from werkzeug.middleware.proxy_fix import ProxyFix
-from config import Settings
-from odoo_client import OdooAPI
+from config import Settings, is_odoo_prod_blocked
+from odoo_client import OdooAPI, ProdBlockedError, PROD_HOST, PROD_DB
 
 
 class TestProductionSecurity(unittest.TestCase):
@@ -121,26 +121,58 @@ class TestProductionSecurity(unittest.TestCase):
                 data = response.get_json()
                 self.assertEqual(data["remote_addr"], "203.0.113.195")
 
+    def test_odoo_prod_allowed_by_default_when_env_unset(self):
+        """Item 1: Without ODOO_BLOCK_PROD in env, OdooAPI with prod URL/db does NOT raise (HTTP mocked)."""
+        env_without_block = {k: v for k, v in os.environ.items() if k != "ODOO_BLOCK_PROD"}
+        with patch.dict(os.environ, env_without_block, clear=True):
+            self.assertFalse(is_odoo_prod_blocked())
+            mock_resp = MagicMock()
+            mock_resp.raise_for_status.return_value = None
+            mock_resp.json.return_value = {"jsonrpc": "2.0", "id": 1, "result": [{"id": 208, "name": "User"}]}
+            with patch("requests.Session.post", return_value=mock_resp) as mock_post:
+                api = OdooAPI(
+                    url=f"https://{PROD_HOST}",
+                    db=PROD_DB,
+                    user_id=208,
+                    api_key="synthetic_key",
+                )
+                res = api.call_method("res.users", "search_read", [[["id", "=", 208]]], {"fields": ["name"]})
+                self.assertEqual(res, [{"id": 208, "name": "User"}])
+                mock_post.assert_called_once()
+
     def test_odoo_block_prod_guard(self):
-        """Law 1: ODOO_BLOCK_PROD=1 blocks bonario-vietnam.odoo.com and db bonario-vietnam with SystemExit('PROD BLOCKED')."""
+        """Item 1: ODOO_BLOCK_PROD=1 blocks PROD_HOST and PROD_DB with ProdBlockedError('PROD BLOCKED')."""
         with patch.dict(os.environ, {"ODOO_BLOCK_PROD": "1"}, clear=False):
-            with self.assertRaises(SystemExit) as ctx_url:
+            self.assertTrue(is_odoo_prod_blocked())
+            with self.assertRaises(ProdBlockedError) as ctx_url:
                 OdooAPI(
-                    url="https://bonario-vietnam.odoo.com",
+                    url=f"https://{PROD_HOST}",
                     db="safe_db",
                     user_id=208,
                     api_key="synthetic_key",
                 )
             self.assertEqual(str(ctx_url.exception), "PROD BLOCKED")
 
-            with self.assertRaises(SystemExit) as ctx_db:
+            with self.assertRaises(ProdBlockedError) as ctx_db:
                 OdooAPI(
                     url="https://test.odoo.example.com",
-                    db="bonario-vietnam",
+                    db=PROD_DB,
                     user_id=208,
                     api_key="synthetic_key",
                 )
             self.assertEqual(str(ctx_db.exception), "PROD BLOCKED")
+
+    def test_pytest_default_env_blocks_prod(self):
+        """Item 1: Running inside tests/ (conftest.py) has ODOO_BLOCK_PROD=1 active by default and blocks prod."""
+        self.assertEqual(os.environ.get("ODOO_BLOCK_PROD"), "1")
+        self.assertTrue(is_odoo_prod_blocked())
+        with self.assertRaises(ProdBlockedError):
+            OdooAPI(
+                url=f"https://{PROD_HOST}",
+                db=PROD_DB,
+                user_id=208,
+                api_key="synthetic_key",
+            )
 
     def test_odoo_client_sanitize_redacts_3_digit_uid_and_credentials(self):
         """Verify OdooAPI._sanitize redacts 3-digit user_id (e.g. 208), api_key, db, and hostname."""

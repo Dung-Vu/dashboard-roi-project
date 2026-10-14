@@ -1,7 +1,7 @@
 """Synthetic Odoo client and synthetic dataset builders for offline testing.
 
-Strictly enforces the production guard (blocks bonario-vietnam.odoo.com) and
-never uses real customer names or makes network requests.
+Strictly enforces the production guard and never uses real customer names
+or makes network requests.
 """
 from __future__ import annotations
 
@@ -9,9 +9,9 @@ import json
 from decimal import Decimal
 from typing import Any
 
-from odoo_client import OdooAPIError
+from odoo_client import OdooAPIError, PROD_DB, PROD_HOST, ProdBlockedError
 
-PROD_BLOCKED_HOST = "bonario-vietnam.odoo.com"
+PROD_BLOCKED_HOST = PROD_HOST
 
 SYNTHETIC_CUSTOMER_ALPHA = "Công ty TNHH Alpha (Synthetic)"
 SYNTHETIC_CUSTOMER_BETA = "Khách hàng Beta"
@@ -24,7 +24,7 @@ BD_SHIPPING_IDS = (506, 1427)
 def assert_not_prod_url(url: str | None) -> None:
     """Hard guard: block any attempt to target production Odoo."""
     if url and PROD_BLOCKED_HOST in str(url).lower():
-        raise SystemExit("PROD BLOCKED")
+        raise ProdBlockedError("PROD BLOCKED")
 
 
 class SyntheticOdooClient:
@@ -42,8 +42,8 @@ class SyntheticOdooClient:
         error_on_methods: dict[tuple[str, str], Exception] | None = None,
     ) -> None:
         assert_not_prod_url(url)
-        if db == "bonario-vietnam":
-            raise SystemExit("PROD BLOCKED")
+        if db == PROD_DB:
+            raise ProdBlockedError("PROD BLOCKED")
         self.records: dict[str, list[dict[str, Any]]] = records or {}
         self.conversions: dict[int, Decimal | float | Exception] = conversions or {}
         self.panels: dict[int, dict[str, Any] | Exception] = panels or {}
