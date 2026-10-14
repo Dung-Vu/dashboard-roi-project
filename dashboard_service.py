@@ -742,6 +742,19 @@ class DashboardService:
             with self._active_updates_lock:
                 self._active_updates.discard(cache_key)
 
+    def _get_prior_cached_payload(self, cache_key: str, db_cache_key: str) -> dict[str, Any] | None:
+        with self._cache_lock:
+            cached = self._projects_dashboard_cache.get(cache_key)
+            if cached and isinstance(cached[1], dict):
+                return json.loads(json.dumps(cached[1]))
+        try:
+            db_cached = self._db_cache.get(db_cache_key, allow_stale=True)
+        except TypeError:
+            db_cached = self._db_cache.get(db_cache_key)
+        if isinstance(db_cached, dict):
+            return json.loads(json.dumps(db_cached))
+        return None
+
     def build_projects_dashboard(
         self,
         date_from: str = "2026-01-01",
@@ -754,15 +767,23 @@ class DashboardService:
         cache_key = f"{company_key}:{date_from}"
         db_cache_key = f"dashboard_payload:{company_key}:{date_from}"
 
-        # If refresh=True: fetch synchronously from Odoo, cache (overwriting existing), and return
+        # If refresh=True: clear old profitability caches BEFORE fetching so get_panel_data is fresh,
+        # and retain the newly fetched profitability caches afterward (F-01).
         if refresh:
             logger.info(f"Forced refresh: fetching synchronously from Odoo for {cache_key}...")
-            payload = self._fetch_projects_dashboard_from_odoo(date_from, company_key)
-            payload["cached_at"] = time.time()
-            
-            # Clear old profitability detail caches since we are doing a forced refresh
+            prior_payload = self._get_prior_cached_payload(cache_key, db_cache_key)
+            self._profitability_cache.clear("profitability:")
             self._db_cache.clear("profitability:")
-            
+            try:
+                payload = self._fetch_projects_dashboard_from_odoo(date_from, company_key)
+            except OdooAPIError as exc:
+                if prior_payload is not None:
+                    logger.warning(f"OdooAPIError during forced refresh for {cache_key}: {exc}. Serving prior cache with data_stale=True.")
+                    if isinstance(prior_payload.get("summary"), dict):
+                        prior_payload["summary"]["data_stale"] = True
+                    return prior_payload
+                raise
+            payload["cached_at"] = time.time()
             self._db_cache.set(db_cache_key, payload)
             with self._cache_lock:
                 self._projects_dashboard_cache[cache_key] = (monotonic(), payload)
@@ -825,7 +846,16 @@ class DashboardService:
 
         # 3. SQLite cache miss: fetch synchronously from Odoo
         logger.info(f"SQLite cache miss for {cache_key}. Fetching synchronously from Odoo.")
-        payload = self._fetch_projects_dashboard_from_odoo(date_from, company_key)
+        prior_payload = self._get_prior_cached_payload(cache_key, db_cache_key)
+        try:
+            payload = self._fetch_projects_dashboard_from_odoo(date_from, company_key)
+        except OdooAPIError as exc:
+            if prior_payload is not None:
+                logger.warning(f"OdooAPIError on cache miss for {cache_key}: {exc}. Serving stale payload with data_stale=True.")
+                if isinstance(prior_payload.get("summary"), dict):
+                    prior_payload["summary"]["data_stale"] = True
+                return prior_payload
+            raise
         payload["cached_at"] = time.time()
         
         self._db_cache.set(db_cache_key, payload)
@@ -1882,16 +1912,9 @@ class DashboardService:
                     for it in cached_items
                 ],
             }
-        try:
-            panel = self.client.call_method("project.project", "get_panel_data", [[project_id]])
-        except OdooAPIError:
-            return {
-                "billed_cost_total": Decimal("0"),
-                "open_commitment_total": Decimal("0"),
-                "expected_cost_total": Decimal("0"),
-                "breakdown": {},
-                "items": [],
-            }
+        panel = self.client.call_method("project.project", "get_panel_data", [[project_id]])
+        if not isinstance(panel, dict):
+            panel = {}
 
         cost_items = panel.get("profitability_items", {}).get("costs", {}).get("data", [])
         breakdown: dict[str, dict[str, Decimal]] = {}
@@ -3306,6 +3329,35 @@ class DashboardService:
             logger.error(f"Failed to update project {project_id} x_studio_giai_trinh in Odoo: {e}", exc_info=True)
             return False
 
+    def _get_all_companies_done_rows(
+        self,
+        date_from: str,
+        current_rows: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Collect Done project rows across all companies for cross-company tag_buckets/tag_gp_ranks (F-04)."""
+        merged_by_id: dict[int, dict[str, Any]] = {}
+        for comp in ("all", "bonario", "ordinaire"):
+            mem_entry = self._projects_dashboard_cache.get(f"{comp}:{date_from}")
+            if mem_entry and isinstance(mem_entry[1], dict):
+                for r in mem_entry[1].get("projects", []):
+                    pid = r.get("project_id")
+                    if pid is not None:
+                        merged_by_id[pid] = r
+            try:
+                db_entry = self._db_cache.get(f"dashboard_payload:{comp}:{date_from}", allow_stale=True)
+            except TypeError:
+                db_entry = self._db_cache.get(f"dashboard_payload:{comp}:{date_from}")
+            if isinstance(db_entry, dict):
+                for r in db_entry.get("projects", []):
+                    pid = r.get("project_id")
+                    if pid is not None and pid not in merged_by_id:
+                        merged_by_id[pid] = r
+        for r in current_rows:
+            pid = r.get("project_id")
+            if pid is not None:
+                merged_by_id[pid] = r
+        return [r for r in merged_by_id.values() if r.get("order_state") == "Done"]
+
     def update_project_in_all_caches(self, project_id: int, updates: dict[str, Any]):
         """Cập nhật đè dữ liệu project trong in-memory cache và SQLite cache, hoặc thêm mới nếu là bản ghi đầy đủ."""
         with self._cache_lock:
@@ -3323,37 +3375,53 @@ class DashboardService:
                         parts = cache_key.split(":")
                         c_key = parts[0]
                         d_from = parts[1] if len(parts) > 1 else "2026-01-01"
-                        
-                        comp_match = (c_key == "all" or 
-                                      not updates.get("company_key") or 
-                                      updates.get("company_key") == c_key)
-                        date_match = (not updates.get("date_order") or 
-                                      updates.get("date_order") >= d_from)
-                        
+
+                        comp_match = (c_key == "all" or updates.get("company_key") == c_key)
+                        date_match = (not updates.get("date_order") or updates.get("date_order") >= d_from)
+
                         if comp_match and date_match:
                             payload["projects"].append(updates)
                             updated = True
-                            
+
                     if updated:
-                        # Recalculate aggregates for memory payload
                         rows = payload.get("projects", [])
                         parts = cache_key.split(":")
                         c_key = parts[0]
                         d_from = parts[1] if len(parts) > 1 else "2026-01-01"
-                        
-                        filtered_rows = [row for row in rows if c_key == "all" or not row.get("company_key") or row.get("company_key") == c_key]
+
+                        filtered_rows = [
+                            row for row in rows
+                            if c_key == "all" or row.get("company_key") == c_key
+                        ]
                         filtered_done_rows = [row for row in filtered_rows if row.get("order_state") == "Done"]
-                        done_rows = [row for row in rows if row.get("order_state") == "Done"]
-                        
-                        payload["summary"] = self._build_projects_dashboard_summary(filtered_done_rows)
-                        payload["tag_buckets"] = self._build_tag_buckets(done_rows)
-                        payload["tag_gp_ranks"] = self._build_tag_gp_ranks(done_rows)
+                        all_done_rows = self._get_all_companies_done_rows(d_from, rows)
+
+                        prior_summary = payload.get("summary") or {}
+                        shipping_overview = None
+                        if "shipping_unassigned_total" in prior_summary:
+                            row_ship_total = sum(as_decimal(r.get("shipping_cost", 0)) for r in filtered_done_rows)
+                            unassigned = as_decimal(prior_summary.get("shipping_unassigned_total", 0))
+                            shipping_overview = {
+                                "shipping_total": as_money(row_ship_total),
+                                "shipping_unassigned_total": as_money(unassigned),
+                                "shipping_company_total": as_money(row_ship_total + unassigned),
+                                "shipping_by_month": prior_summary.get("shipping_by_month", {}),
+                            }
+                        refund_total = as_decimal(prior_summary.get("refund_total", 0))
+
+                        payload["summary"] = self._build_projects_dashboard_summary(
+                            filtered_done_rows,
+                            shipping_overview=shipping_overview,
+                            refund_total=refund_total,
+                        )
+                        payload["tag_buckets"] = self._build_tag_buckets(all_done_rows)
+                        payload["tag_gp_ranks"] = self._build_tag_gp_ranks(all_done_rows)
                         payload["meta"] = self._build_projects_dashboard_meta(filtered_rows, filtered_done_rows, d_from, c_key)
-                        
+
         db_path = self._db_cache.db_path
         import json
         import sqlite3
-        
+
         db_rows = []
         try:
             conn = sqlite3.connect(str(db_path), timeout=30.0)
@@ -3363,14 +3431,13 @@ class DashboardService:
             logger.error(f"Failed to query SQLite cache keys for project {project_id}: {e}")
             db_rows = []
 
-        updates_to_write = []
-        for key, value_json, created_at in db_rows:
+        for key, value_json, _created_at in db_rows:
             try:
                 payload = json.loads(value_json)
             except Exception as e:
                 logger.error(f"Failed to parse JSON for key {key}: {e}")
                 continue
-                
+
             updated = False
             if "projects" in payload:
                 for p in payload["projects"]:
@@ -3383,48 +3450,50 @@ class DashboardService:
                     if len(parts) == 3:
                         c_key = parts[1]
                         d_from = parts[2]
-                        comp_match = (c_key == "all" or 
-                                      not updates.get("company_key") or 
-                                      updates.get("company_key") == c_key)
-                        date_match = (not updates.get("date_order") or 
-                                      updates.get("date_order") >= d_from)
+                        comp_match = (c_key == "all" or updates.get("company_key") == c_key)
+                        date_match = (not updates.get("date_order") or updates.get("date_order") >= d_from)
                         if comp_match and date_match:
                             payload["projects"].append(updates)
                             updated = True
             if updated:
                 try:
-                    # Recalculate aggregates for SQLite payload
                     project_rows = payload.get("projects", [])
                     parts = key.split(":")
                     c_key = parts[1]
                     d_from = parts[2]
-                    
-                    filtered_rows = [row for row in project_rows if c_key == "all" or not row.get("company_key") or row.get("company_key") == c_key]
+
+                    filtered_rows = [
+                        row for row in project_rows
+                        if c_key == "all" or row.get("company_key") == c_key
+                    ]
                     filtered_done_rows = [row for row in filtered_rows if row.get("order_state") == "Done"]
-                    done_rows = [row for row in project_rows if row.get("order_state") == "Done"]
-                    
-                    payload["summary"] = self._build_projects_dashboard_summary(filtered_done_rows)
-                    payload["tag_buckets"] = self._build_tag_buckets(done_rows)
-                    payload["tag_gp_ranks"] = self._build_tag_gp_ranks(done_rows)
+                    all_done_rows = self._get_all_companies_done_rows(d_from, project_rows)
+
+                    prior_summary = payload.get("summary") or {}
+                    shipping_overview = None
+                    if "shipping_unassigned_total" in prior_summary:
+                        row_ship_total = sum(as_decimal(r.get("shipping_cost", 0)) for r in filtered_done_rows)
+                        unassigned = as_decimal(prior_summary.get("shipping_unassigned_total", 0))
+                        shipping_overview = {
+                            "shipping_total": as_money(row_ship_total),
+                            "shipping_unassigned_total": as_money(unassigned),
+                            "shipping_company_total": as_money(row_ship_total + unassigned),
+                            "shipping_by_month": prior_summary.get("shipping_by_month", {}),
+                        }
+                    refund_total = as_decimal(prior_summary.get("refund_total", 0))
+
+                    payload["summary"] = self._build_projects_dashboard_summary(
+                        filtered_done_rows,
+                        shipping_overview=shipping_overview,
+                        refund_total=refund_total,
+                    )
+                    payload["tag_buckets"] = self._build_tag_buckets(all_done_rows)
+                    payload["tag_gp_ranks"] = self._build_tag_gp_ranks(all_done_rows)
                     payload["meta"] = self._build_projects_dashboard_meta(filtered_rows, filtered_done_rows, d_from, c_key)
-                    
-                    updates_to_write.append((key, json.dumps(payload), created_at))
+
+                    self._db_cache.set(key, payload)
                 except Exception as e:
                     logger.error(f"Failed to recalculate aggregates for key {key}: {e}")
-
-        if updates_to_write:
-            with self._db_cache._lock:
-                try:
-                    conn = sqlite3.connect(str(db_path), timeout=30.0)
-                    for key, val_str, created_at in updates_to_write:
-                        conn.execute(
-                            "INSERT OR REPLACE INTO cache (key, value, created_at) VALUES (?, ?, ?)",
-                            (key, val_str, created_at)
-                        )
-                    conn.commit()
-                    conn.close()
-                except Exception as e:
-                    logger.error(f"Failed to update SQLite cache for project {project_id}: {e}")
 
     def _rebuild_dashboard_aggregates(self, date_from: str, company_key: str) -> dict[str, Any]:
         """Tái cấu trúc và tính toán lại summary, tag_buckets, tag_gp_ranks từ cache hiện tại."""
@@ -3438,31 +3507,48 @@ class DashboardService:
                 if db_cached:
                     cached = (monotonic(), db_cached)
                     self._projects_dashboard_cache[cache_key] = cached
-            
+
             if cached:
                 payload = cached[1]
                 rows = payload.get("projects", [])
-                
+
                 filtered_rows = [
                     row for row in rows
-                    if company_key == "all" or not row.get("company_key") or row.get("company_key") == company_key
+                    if company_key == "all" or row.get("company_key") == company_key
                 ]
                 filtered_done_rows = [row for row in filtered_rows if row.get("order_state") == "Done"]
-                done_rows = [row for row in rows if row.get("order_state") == "Done"]
-                
-                summary = self._build_projects_dashboard_summary(filtered_done_rows)
-                tag_buckets = self._build_tag_buckets(done_rows)
-                tag_gp_ranks = self._build_tag_gp_ranks(done_rows)
+                all_done_rows = self._get_all_companies_done_rows(date_from, rows)
+
+                prior_summary = payload.get("summary") or {}
+                shipping_overview = None
+                if "shipping_unassigned_total" in prior_summary:
+                    row_ship_total = sum(as_decimal(r.get("shipping_cost", 0)) for r in filtered_done_rows)
+                    unassigned = as_decimal(prior_summary.get("shipping_unassigned_total", 0))
+                    shipping_overview = {
+                        "shipping_total": as_money(row_ship_total),
+                        "shipping_unassigned_total": as_money(unassigned),
+                        "shipping_company_total": as_money(row_ship_total + unassigned),
+                        "shipping_by_month": prior_summary.get("shipping_by_month", {}),
+                    }
+                refund_total = as_decimal(prior_summary.get("refund_total", 0))
+
+                summary = self._build_projects_dashboard_summary(
+                    filtered_done_rows,
+                    shipping_overview=shipping_overview,
+                    refund_total=refund_total,
+                )
+                tag_buckets = self._build_tag_buckets(all_done_rows)
+                tag_gp_ranks = self._build_tag_gp_ranks(all_done_rows)
                 meta = self._build_projects_dashboard_meta(filtered_rows, filtered_done_rows, date_from, company_key)
-                
+
                 payload["summary"] = summary
                 payload["tag_buckets"] = tag_buckets
                 payload["tag_gp_ranks"] = tag_gp_ranks
                 payload["meta"] = meta
                 payload["fetched_at"] = datetime.now(timezone.utc).isoformat()
-                
+
                 self._db_cache.set(f"dashboard_payload:{company_key}:{date_from}", payload)
-                
+
                 return {
                     "summary": summary,
                     "tag_buckets": tag_buckets,
@@ -3474,7 +3560,10 @@ class DashboardService:
     def get_delta_updates(self, last_sync_str: str, company_key: str = "all", date_from: str = "2026-01-01") -> dict[str, Any]:
         """Lấy các thay đổi gia tăng (delta updates) từ Odoo kể từ mốc last_sync."""
         from datetime import datetime, timezone, timedelta
-        
+
+        date_from = self._normalize_date_from(date_from)
+        company_key = self._normalize_company_key(company_key)
+
         try:
             if not last_sync_str:
                 dt_utc = datetime.now(timezone.utc) - timedelta(minutes=1)
@@ -3484,12 +3573,12 @@ class DashboardService:
         except Exception as e:
             logger.warning(f"Failed to parse last_sync '{last_sync_str}': {e}. Using 1 minute ago.")
             dt_utc = datetime.now(timezone.utc) - timedelta(minutes=1)
-            
+
         dt_utc = dt_utc - timedelta(seconds=30)
         last_sync_utc_str = dt_utc.strftime("%Y-%m-%d %H:%M:%S")
-        
+
         logger.info(f"Checking Odoo changes since {last_sync_utc_str} (UTC) for delta update...")
-        
+
         try:
             changed_projects = self.client.call_method(
                 "project.project",
@@ -3500,15 +3589,15 @@ class DashboardService:
                     "context": {"active_test": False},
                 }
             )
-            
+
             changed_orders = self.client.search_read(
                 "sale.order",
                 [["write_date", ">", last_sync_utc_str]],
                 ["id", "name", "partner_id", "company_id", "x_sale_order_tag_ids", "x_studio_selection_field_q4_1imrcsjj8"],
             )
-            
+
             project_ids = {p["id"] for p in changed_projects}
-            
+
             if changed_orders:
                 so_ids = [order["id"] for order in changed_orders]
                 so_projects = self.client.call_method(
@@ -3522,14 +3611,44 @@ class DashboardService:
                 )
                 for p in so_projects:
                     project_ids.add(p["id"])
-                    
+
+            # F-03: Also detect changes in account.analytic.line / vendor bills since last_sync
+            try:
+                changed_aal = self.client.search_read(
+                    "account.analytic.line",
+                    [["write_date", ">", last_sync_utc_str]],
+                    ["id", "account_id"],
+                    limit=2000,
+                )
+                changed_account_ids = sorted(
+                    {
+                        relation_id(entry.get("account_id"))
+                        for entry in (changed_aal or [])
+                        if relation_id(entry.get("account_id"))
+                    }
+                )
+                if changed_account_ids:
+                    aal_projects = self.client.call_method(
+                        "project.project",
+                        "search_read",
+                        [[["account_id", "in", changed_account_ids]]],
+                        {
+                            "fields": ["id"],
+                            "context": {"active_test": False},
+                        },
+                    )
+                    for p in aal_projects:
+                        project_ids.add(p["id"])
+            except Exception as aal_err:
+                logger.warning(f"Failed to query changed account.analytic.line in get_delta_updates: {aal_err}")
+
             if not project_ids:
                 return {
                     "ok": True,
                     "updated_projects": [],
                     "sync_time": datetime.now(timezone.utc).isoformat()
                 }
-                
+
             projects = self.client.call_method(
                 "project.project",
                 "search_read",
@@ -3539,24 +3658,73 @@ class DashboardService:
                     "context": {"active_test": False},
                 }
             )
-            
+
             so_ids = [relation_id(p.get("sale_order_id")) for p in projects if relation_id(p.get("sale_order_id"))]
             sale_orders: list[dict[str, Any]] = []
             if so_ids:
                 sale_orders = self.client.search_read(
                     "sale.order",
                     [["id", "in", so_ids]],
-                    ["id", "name", "partner_id", "company_id", "x_sale_order_tag_ids", "x_studio_selection_field_q4_1imrcsjj8", "amount_untaxed", "user_id"],
+                    [
+                        "id",
+                        "name",
+                        "state",
+                        "date_order",
+                        "currency_id",
+                        "partner_id",
+                        "company_id",
+                        "x_sale_order_tag_ids",
+                        "x_studio_selection_field_q4_1imrcsjj8",
+                        "amount_untaxed",
+                        "user_id",
+                    ],
                 )
-            
+
             sale_orders_by_id = {order["id"]: order for order in sale_orders}
             tag_map = self._get_sale_order_tag_map(sale_orders)
+
+            # F-03: Filter projects using the same rules as _get_dashboard_sale_orders
+            allowed_states = self._allowed_sale_order_states()
+            date_from_utc = self._date_from_utc_boundary(date_from)
+            valid_projects: list[dict[str, Any]] = []
+            for p in projects:
+                so_id = relation_id(p.get("sale_order_id"))
+                so = sale_orders_by_id.get(so_id or 0)
+                if not so:
+                    continue
+                if self._is_excluded_salesperson(so):
+                    continue
+                so_state = so.get("state")
+                if so_state not in (None, False) and str(so_state).strip().lower() not in allowed_states:
+                    continue
+                if not tag_map.get(so["id"]):
+                    continue
+                so_date = str(so.get("date_order") or "")
+                if so_date and so_date < date_from_utc:
+                    continue
+                valid_projects.append(p)
+
+            projects = valid_projects
+            if not projects:
+                return {
+                    "ok": True,
+                    "updated_projects": [],
+                    "sync_time": datetime.now(timezone.utc).isoformat()
+                }
+
+            # Invalidate profitability cache for changed projects so updated bills/commitments take effect
+            for p in projects:
+                self._profitability_cache.clear(f"profitability:{p['id']}")
+                self._db_cache.clear(f"profitability:{p['id']}")
+
             analytic_adjustments = self._build_dashboard_analytic_adjustments(projects, sale_orders_by_id)
-            
+
             # Precalculate shipping costs map for the projects
             account_ids = sorted(set(relation_id(p.get("account_id")) for p in projects if relation_id(p.get("account_id"))))
-            shipping_cost_by_project, shipping_cost_by_project_and_month = self._fetch_shipping_costs(account_ids)
-            
+            shipping_data = self._fetch_shipping_data(account_ids=account_ids, date_from=date_from)
+            shipping_cost_by_project = shipping_data["by_project"]
+            shipping_cost_by_project_and_month = shipping_data["by_project_and_month"]
+
             updated_rows = []
             for p in projects:
                 try:
@@ -3567,15 +3735,16 @@ class DashboardService:
                         analytic_adjustments,
                         shipping_cost_by_project,
                         shipping_cost_by_project_and_month,
+                        shipping_data,
                     )
                     updated_rows.append(row)
                     self.update_project_in_all_caches(p["id"], row)
                 except Exception as ex:
                     logger.error(f"Failed to rebuild dashboard row for project {p.get('id')}: {ex}")
-            
+
             # Tái cấu trúc aggregates từ cache
             aggregates = self._rebuild_dashboard_aggregates(date_from, company_key)
-                    
+
             res = {
                 "ok": True,
                 "updated_projects": updated_rows,
