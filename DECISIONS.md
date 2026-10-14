@@ -68,4 +68,8 @@ Tài liệu này ghi nhận toàn bộ các quyết định nghiệp vụ và k�
    - Xóa `profitability:*` trước khi fetch khi `refresh=True` và giữ lại dữ liệu mới sau khi fetch.
    - Khi gặp `OdooAPIError` (như HTTP 429), không ghi đè số `0` vào cache mà trả về bản cache hợp lệ gần nhất kèm cờ `summary["data_stale"] = True`.
    - `get_delta_updates` kiểm tra thêm `account.analytic.line` mới/sửa, áp dụng đầy đủ bộ lọc SO, và bảo toàn `tag_buckets` liên công ty.
-   - `PersistentCache` lưu cột `expires_at` theo từng key, dùng chung lock theo `db_path`, tự phục hồi khi JSON/SQLite lỗi, và kiểm tra `owner_id` khi giải phóng `warmer_lock`.
+   - `PersistentCache` lưu cột `expires_at` dạng `float` theo từng key, dùng chung lock theo `db_path`, tự phục hồi khi JSON/SQLite lỗi, và kiểm tra `owner_id` khi giải phóng `warmer_lock`.
+9. **SEC-01 & SEC-02 (Bảo mật & Quản lý Khóa API)**:
+   - **Trạng thái khóa API cũ**: **Key cũ đã bị thu hồi trên prod ngày 14/10/2026**. Toàn bộ các script trong `tests/` chỉ đọc thông tin kết nối từ biến môi trường, tuyệt đối không hardcode key hoặc URL production.
+   - Guard chặn kết nối production (`ProdBlockedError`) mặc định tắt ở runtime (`ODOO_BLOCK_PROD=0`) để không ảnh hưởng container production, và chỉ bật tự động trong `tests/conftest.py` và `tools/reconcile_shipping.py` (`ODOO_BLOCK_PROD=1`).
+
