@@ -894,7 +894,7 @@ class ShippingRulesTest(unittest.TestCase):
         self.assertEqual(float(items[0].get("amount", 0)), 900_000.0)
 
     def test_s9_custom_cost_breakdown_invariant_in_build_project_dashboard(self) -> None:
-        """S9: PO shipping is deducted from purchase_order, non-PO shipping from other_expense, negative numbers are preserved, and sum(expected) == expected_cost_total."""
+        """S9 & Item 3: Deduct shipping from its matching panel section (purchase_order, other_purchase_costs, expenses, other) without creating bogus negative items, preserving sum(expected) == expected_cost_total."""
         records = build_base_synthetic_records()
         records["sale.order"] = [
             {
@@ -948,10 +948,10 @@ class ShippingRulesTest(unittest.TestCase):
                 "move_id": [995, "BILL/095"],
                 "parent_state": "posted",
                 "move_type": "in_invoice",
-                "balance": 3_000_000,
+                "balance": 7_615_645,
                 "product_id": [202, "Ship Service"],
                 "purchase_line_id": [901, "PO Line Ship"],
-                "analytic_distribution": {"101,1519": 100},
+                "analytic_distribution": {"101,1518": 100},
             },
             {
                 "id": 852,
@@ -960,7 +960,7 @@ class ShippingRulesTest(unittest.TestCase):
                 "move_id": [996, "BILL/096"],
                 "parent_state": "posted",
                 "move_type": "in_invoice",
-                "balance": 6_000_000,
+                "balance": 6_700_000,
                 "product_id": [202, "Ship Service"],
                 "purchase_line_id": False,
                 "analytic_distribution": {"101,1519": 100},
@@ -971,9 +971,9 @@ class ShippingRulesTest(unittest.TestCase):
                 "id": 61,
                 "date": "2026-05-05",
                 "name": "PO Ship Bill",
-                "amount": -3_000_000,
+                "amount": -7_615_645,
                 "account_id": [101, "AA-101"],
-                "x_plan5_id": [1519, "SC - Logistics OPS"],
+                "x_plan5_id": [1518, "SC - Logistics SO"],
                 "product_id": [202, "Ship Service"],
                 "move_line_id": [851, "BILL/095"],
                 "category": "vendor_bill",
@@ -982,7 +982,7 @@ class ShippingRulesTest(unittest.TestCase):
                 "id": 62,
                 "date": "2026-05-06",
                 "name": "Non-PO Ship Bill",
-                "amount": -6_000_000,
+                "amount": -6_700_000,
                 "account_id": [101, "AA-101"],
                 "x_plan5_id": [1519, "SC - Logistics OPS"],
                 "product_id": [202, "Ship Service"],
@@ -991,10 +991,9 @@ class ShippingRulesTest(unittest.TestCase):
             },
         ]
 
-        # Native profitability has purchase_order = 12M, vendor_bills (expense) = 5M -> total 17M.
-        # PO shipping is 3M -> purchase_order becomes 9M.
-        # Non-PO shipping is 6M -> other_expense becomes 5M - 6M = -1M (negative preserved, no max(0, ...)).
-        # Total custom_cost_breakdown = 9M (PO) + 9M (Shipping) + (-1M) (Other) = 17M == expected_cost_total!
+        # Mirrors Project 1564: purchase_order = 27,975,659, other_purchase_costs = 6,860,056.
+        # PO shipping = 7,615,645 -> purchase_order becomes 20,360,014.
+        # Non-PO vendor_bill shipping = 6,700,000 -> deducted from other_purchase_costs -> becomes 160,056 (NOT -6,700,000 in other_expense!).
         client = SyntheticOdooClient(
             records=records,
             panels={
@@ -1002,8 +1001,8 @@ class ShippingRulesTest(unittest.TestCase):
                     "profitability_items": {
                         "costs": {
                             "data": [
-                                {"id": "purchase_order", "name": "Purchase Orders", "billed": -10_000_000, "to_bill": -2_000_000},
-                                {"id": "vendor_bills", "name": "Vendor Bills", "billed": -5_000_000, "to_bill": 0},
+                                {"id": "purchase_order", "name": "Purchase Orders", "billed": -27_975_659, "to_bill": 0},
+                                {"id": "other_purchase_costs", "name": "Other Purchase Costs", "billed": -6_860_056, "to_bill": 0},
                             ]
                         }
                     }
@@ -1022,11 +1021,126 @@ class ShippingRulesTest(unittest.TestCase):
             expected_total,
             f"Invariant violated: sum(custom_cost_breakdown.expected)={sum_expected} != expected_cost_total={expected_total}. Breakdown: {breakdown}",
         )
+        for item in breakdown:
+            self.assertGreaterEqual(
+                item["expected"],
+                0.0,
+                f"No breakdown item may be negative when original panel sections are positive! Got: {item}",
+            )
         by_id = {item["id"]: item for item in breakdown}
-        self.assertEqual(by_id["shipping_cost"]["expected"], 9_000_000.0)
-        self.assertEqual(by_id["purchase_order"]["expected"], 9_000_000.0)
-        self.assertEqual(by_id["other_expense"]["expected"], -1_000_000.0)
+        self.assertEqual(by_id["purchase_order"]["expected"], 20_360_014.0)
+        self.assertEqual(by_id["other_purchase_costs"]["expected"], 160_056.0)
+        self.assertEqual(by_id["shipping_cost"]["expected"], 14_315_645.0)
+        self.assertNotIn("other_expense", by_id)
+
+    def test_s9_expense_vat_discrepancy_clamped_no_negative_section(self) -> None:
+        """Item 3 (Project 1685 scenario): When AAL in_receipt shipping (858,622 with VAT) exceeds untaxed expenses panel section (828,992), no section goes negative and sum(expected) == expected_cost_total."""
+        records = build_base_synthetic_records()
+        records["sale.order"] = [
+            {
+                "id": 11,
+                "name": "SO-S9-1685",
+                "state": "sale",
+                "partner_id": [1, SYNTHETIC_CUSTOMER_ALPHA],
+                "currency_id": [1, "VND"],
+                "date_order": "2026-06-01 09:00:00",
+                "amount_untaxed": 50_000_000,
+                "amount_total": 55_000_000,
+                "user_id": [2, "Salesperson Synthetic"],
+            }
+        ]
+        records["sale.order.line"] = [
+            {
+                "id": 1002,
+                "sequence": 10,
+                "name": "Table Alpha",
+                "order_id": [11, "SO-S9-1685"],
+                "display_type": False,
+                "is_downpayment": False,
+                "product_id": [201, "Table"],
+                "product_uom_qty": 1,
+                "qty_invoiced": 1,
+                "qty_to_invoice": 0,
+                "price_unit": 50_000_000,
+                "discount": 0,
+                "price_subtotal": 50_000_000,
+                "untaxed_amount_invoiced": 50_000_000,
+                "untaxed_amount_to_invoice": 0,
+            }
+        ]
+        records["product.product"] = [{"id": 201, "type": "consu"}]
+        records["project.project"] = [
+            {
+                "id": 1685,
+                "name": "DA 1685 Expense VAT Clamp",
+                "allow_timesheets": True,
+                "partner_id": [1, SYNTHETIC_CUSTOMER_ALPHA],
+                "sale_order_id": [11, "SO-S9-1685"],
+                "account_id": [1781, "AA-1781"],
+                "active": True,
+            }
+        ]
+        records["account.move.line"] = [
+            {
+                "id": 901,
+                "date": "2026-06-10",
+                "name": f"Expense Receipt Ship - {SYNTHETIC_VENDOR_GAMMA}",
+                "move_id": [997, "EXP/097"],
+                "parent_state": "posted",
+                "move_type": "in_receipt",
+                "balance": 858_622,
+                "product_id": [202, "Ship Expense"],
+                "purchase_line_id": False,
+                "analytic_distribution": {"1781,1522": 100},
+            }
+        ]
+        records["account.analytic.line"] = [
+            {
+                "id": 71,
+                "date": "2026-06-10",
+                "name": "Expense Receipt Ship",
+                "amount": -858_622,
+                "account_id": [1781, "AA-1781"],
+                "x_plan5_id": [1522, "[ORD] SC - Logistics OPS"],
+                "product_id": [202, "Ship Expense"],
+                "move_line_id": [901, "EXP/097"],
+                "category": "other",
+            }
+        ]
+
+        client = SyntheticOdooClient(
+            records=records,
+            panels={
+                1685: {
+                    "profitability_items": {
+                        "costs": {
+                            "data": [
+                                {"id": "purchase_order", "billed": -6_548_000, "to_bill": 0},
+                                {"id": "expenses", "billed": -828_992, "to_bill": 0},
+                                {"id": "cost_of_goods_sold", "billed": -14_399_525, "to_bill": 0},
+                            ]
+                        }
+                    }
+                }
+            },
+        )
+        service = self._make_service(client)
+        detail = service.build_project_dashboard(1685)
+        breakdown = detail["custom_cost_breakdown"]
+        expected_total = detail["profitability_costs"]["expected_cost_total"]
+        sum_expected = round(sum(item["expected"] for item in breakdown), 2)
+
+        self.assertEqual(sum_expected, expected_total)
+        for item in breakdown:
+            self.assertGreaterEqual(item["expected"], 0.0)
+        by_id = {item["id"]: item for item in breakdown}
+        self.assertEqual(by_id["purchase_order"]["expected"], 6_548_000.0)
+        self.assertEqual(by_id["cost_of_goods_sold"]["expected"], 14_399_525.0)
+        self.assertEqual(by_id["shipping_cost"]["expected"], 828_992.0)
+        self.assertNotIn("expenses", by_id)
+        self.assertNotIn("other_expense", by_id)
 
 
 if __name__ == "__main__":
     unittest.main()
+

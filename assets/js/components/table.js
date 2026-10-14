@@ -11,6 +11,9 @@ export function getSortValue(project, columnKey) {
 
 const _COST_LABEL_MAP = {
     'purchase_order': 'Đơn mua hàng',
+    'purchase_orders': 'Đơn mua hàng',
+    'other_purchase_costs': 'Đơn mua hàng khác',
+    'other_purchase_cost': 'Đơn mua hàng khác',
     'manufacturing_order': 'Lệnh sản xuất',
     'cost_of_goods_sold': 'Giá vốn hàng bán',
     'employee': 'Nhân công',

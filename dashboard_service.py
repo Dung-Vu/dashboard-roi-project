@@ -1751,28 +1751,69 @@ class DashboardService:
             profitability_costs,
         )
 
-        # S9: Calculate custom cost breakdown preserving exact sum(expected) == expected_cost_total
-        po_categories = {"purchase_order", "purchase_orders"}
-        expense_categories = {"expense", "expenses", "vendor_bill", "vendor_bills", "other"}
+        # S9: Calculate custom cost breakdown by deducting shipping from its matching
+        # profitability panel section (PO, other_purchase_costs/vendor_bill, expenses, other)
+        # while ensuring no non-negative section becomes negative and preserving
+        # sum(expected) == expected_cost_total.
         profit_items = profitability_costs.get("items", [])
-
-        po_items = [it for it in profit_items if it.get("id") in po_categories]
-        expense_items = [it for it in profit_items if it.get("id") in expense_categories]
-        other_non_expense_items = [
-            it for it in profit_items
-            if it.get("id") not in po_categories and it.get("id") not in expense_categories
+        section_state: list[dict[str, Any]] = [
+            {
+                "id": str(it.get("id") or "other"),
+                "label": it.get("label") or str(it.get("id") or "other"),
+                "orig_billed": as_decimal(it.get("billed")),
+                "orig_commit": as_decimal(it.get("open_commitment")),
+                "billed": as_decimal(it.get("billed")),
+                "commit": as_decimal(it.get("open_commitment")),
+            }
+            for it in profit_items
         ]
 
-        total_po_billed = sum(as_decimal(it["billed"]) for it in po_items)
-        total_po_commit = sum(as_decimal(it["open_commitment"]) for it in po_items)
-
-        total_expense_billed = sum(as_decimal(it["billed"]) for it in expense_items)
-        total_expense_commit = sum(as_decimal(it["open_commitment"]) for it in expense_items)
-
-        shipping_po_billed = Decimal("0")
-        shipping_po_commit = Decimal("0")
-        shipping_non_po_billed = Decimal("0")
-        shipping_non_po_commit = Decimal("0")
+        bucket_candidates: dict[str, tuple[str, ...]] = {
+            "po": (
+                "purchase_order",
+                "purchase_orders",
+                "other_purchase_costs",
+                "vendor_bill",
+                "vendor_bills",
+                "expenses",
+                "expense",
+                "other",
+                "other_expense",
+            ),
+            "vendor_bill": (
+                "other_purchase_costs",
+                "vendor_bill",
+                "vendor_bills",
+                "expenses",
+                "expense",
+                "other",
+                "other_expense",
+                "purchase_order",
+                "purchase_orders",
+            ),
+            "expense": (
+                "expenses",
+                "expense",
+                "other_purchase_costs",
+                "vendor_bill",
+                "vendor_bills",
+                "other",
+                "other_expense",
+            ),
+            "other": (
+                "other",
+                "other_expense",
+                "expenses",
+                "expense",
+                "other_purchase_costs",
+                "vendor_bill",
+                "vendor_bills",
+            ),
+        }
+        ship_by_bucket: dict[str, dict[str, Decimal]] = {
+            k: {"billed": Decimal("0"), "commit": Decimal("0")}
+            for k in bucket_candidates
+        }
 
         for source in cost_model.get("cost_sources", []):
             is_ship = bool(
@@ -1786,77 +1827,106 @@ class DashboardService:
                 source.get("purchase_line_id") is not None
                 or source.get("source") == "po_open_commitment"
             )
+            move_type = str(source.get("move_type") or "").strip().lower()
+            category = str(source.get("category") or "").strip().lower()
+
+            if is_po:
+                bucket = "po"
+            elif move_type in {"in_invoice", "in_refund"} or category in {
+                "vendor_bill",
+                "vendor_bills",
+                "other_purchase_costs",
+            }:
+                bucket = "vendor_bill"
+            elif move_type == "in_receipt" or category in {"expense", "expenses"}:
+                bucket = "expense"
+            else:
+                bucket = "other"
+
             amount = as_decimal(source.get("amount") or 0)
             if source.get("source") == "posted_actual_cost":
-                if is_po:
-                    shipping_po_billed += amount
-                else:
-                    shipping_non_po_billed += amount
+                ship_by_bucket[bucket]["billed"] += amount
             else:
-                if is_po:
-                    shipping_po_commit += amount
+                ship_by_bucket[bucket]["commit"] += amount
+
+        shipping_billed = Decimal("0")
+        shipping_commit = Decimal("0")
+
+        for bucket, candidates in bucket_candidates.items():
+            for field, is_billed in (("billed", True), ("commit", False)):
+                net_amt = ship_by_bucket[bucket][field]
+                if net_amt == 0:
+                    continue
+                if net_amt > 0:
+                    remaining = net_amt
+                    for cid in candidates:
+                        if remaining <= 0:
+                            break
+                        for sec in section_state:
+                            if sec["id"] != cid:
+                                continue
+                            avail = sec[field]
+                            if avail > 0:
+                                deduct = min(remaining, avail)
+                                sec[field] -= deduct
+                                remaining -= deduct
+                                if is_billed:
+                                    shipping_billed += deduct
+                                else:
+                                    shipping_commit += deduct
+                                if remaining <= 0:
+                                    break
                 else:
-                    shipping_non_po_commit += amount
+                    # Negative net shipping (e.g., vendor refund): remove refund from matching section
+                    for cid in candidates:
+                        matched = False
+                        for sec in section_state:
+                            if sec["id"] == cid:
+                                sec[field] -= net_amt
+                                if is_billed:
+                                    shipping_billed += net_amt
+                                else:
+                                    shipping_commit += net_amt
+                                matched = True
+                                break
+                        if matched:
+                            break
 
-        shipping_billed = shipping_po_billed + shipping_non_po_billed
-        shipping_commit = shipping_po_commit + shipping_non_po_commit
         shipping_expected = shipping_billed + shipping_commit
-
         custom_breakdown: list[dict[str, Any]] = []
 
-        if po_items or (shipping_po_billed != 0 or shipping_po_commit != 0):
-            if po_items:
-                adj_po_billed = total_po_billed - shipping_po_billed
-                adj_po_commit = total_po_commit - shipping_po_commit
-                adj_po_expected = adj_po_billed + adj_po_commit
-                po_label = po_items[0].get("label", po_items[0]["id"])
-                po_id = po_items[0]["id"]
-                if adj_po_billed != 0 or adj_po_commit != 0 or adj_po_expected != 0:
-                    custom_breakdown.append({
-                        "id": po_id,
-                        "label": po_label,
-                        "billed": as_money(adj_po_billed),
-                        "open_commitment": as_money(adj_po_commit),
-                        "expected": as_money(adj_po_expected),
-                    })
-                unabsorbed_po_billed = Decimal("0")
-                unabsorbed_po_commit = Decimal("0")
-            else:
-                unabsorbed_po_billed = shipping_po_billed
-                unabsorbed_po_commit = shipping_po_commit
-        else:
-            unabsorbed_po_billed = Decimal("0")
-            unabsorbed_po_commit = Decimal("0")
-
-        for it in other_non_expense_items:
+        for sec in section_state:
+            sec_billed = sec["billed"]
+            sec_commit = sec["commit"]
+            sec_expected = sec_billed + sec_commit
+            if (
+                abs(sec_billed) < TWO_DECIMALS
+                and abs(sec_commit) < TWO_DECIMALS
+                and abs(sec_expected) < TWO_DECIMALS
+            ):
+                continue
+            sec_label = sec["label"]
+            if sec["id"] in {"other", "other_expense"} and sec_label in {"other", "other_expense"}:
+                sec_label = "Chi phí khác"
             custom_breakdown.append({
-                "id": it["id"],
-                "label": it.get("label", it["id"]),
-                "billed": as_money(as_decimal(it["billed"])),
-                "open_commitment": as_money(as_decimal(it["open_commitment"])),
-                "expected": as_money(as_decimal(it["expected"])),
+                "id": sec["id"],
+                "label": sec_label,
+                "billed": as_money(sec_billed),
+                "open_commitment": as_money(sec_commit),
+                "expected": as_money(sec_expected),
             })
 
-        if shipping_billed != 0 or shipping_commit != 0 or shipping_expected != 0:
+        if (
+            abs(shipping_billed) >= TWO_DECIMALS
+            or abs(shipping_commit) >= TWO_DECIMALS
+            or abs(shipping_expected) >= TWO_DECIMALS
+        ):
             custom_breakdown.append({
                 "id": "shipping_cost",
                 "label": "Chi phí vận chuyển",
                 "billed": as_money(shipping_billed),
                 "open_commitment": as_money(shipping_commit),
                 "expected": as_money(shipping_expected),
-            })
-
-        other_billed = total_expense_billed - shipping_non_po_billed - unabsorbed_po_billed
-        other_commit = total_expense_commit - shipping_non_po_commit - unabsorbed_po_commit
-        other_expected = other_billed + other_commit
-
-        if other_billed != 0 or other_commit != 0 or other_expected != 0:
-            custom_breakdown.append({
-                "id": "other_expense",
-                "label": "Chi phí khác",
-                "billed": as_money(other_billed),
-                "open_commitment": as_money(other_commit),
-                "expected": as_money(other_expected),
             })
 
         return {
@@ -2434,6 +2504,8 @@ class DashboardService:
                     or relation_name(analytic_entry.get("move_line_id")),
                     "label": move_line.get("name") or analytic_entry.get("name") or "Posted cost",
                     "date": move_line.get("date") or analytic_entry.get("date"),
+                    "move_type": move_type,
+                    "category": analytic_entry.get("category"),
                     "purchase_line_id": relation_id(move_line.get("purchase_line_id")),
                     "analytic_distribution": move_line.get("analytic_distribution"),
                 },
@@ -2489,6 +2561,7 @@ class DashboardService:
                     "reference": relation_name(line.get("move_id")),
                     "label": line.get("name") or "Draft vendor bill line",
                     "date": line.get("date"),
+                    "move_type": line.get("move_type"),
                     "purchase_line_id": relation_id(line.get("purchase_line_id")),
                     "analytic_distribution": dist,
                 }

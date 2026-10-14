@@ -172,10 +172,10 @@ class CostBreakdownDetailIntegrityTest(unittest.TestCase):
 
         self.assertIn("purchase_order", by_id)
         self.assertIn("shipping_cost", by_id)
-        self.assertIn("other_expense", by_id)
+        self.assertIn("vendor_bills", by_id)
         self.assertEqual(by_id["purchase_order"]["expected"], 25_000_000.0)
         self.assertEqual(by_id["shipping_cost"]["expected"], 2_000_000.0)
-        self.assertEqual(by_id["other_expense"]["expected"], 4_000_000.0)
+        self.assertEqual(by_id["vendor_bills"]["expected"], 4_000_000.0)
 
     def test_behavioral_frontend_update_aggregated_cost_table_in_node_vm(self):
         """Behavioral test: Execute updateAggregatedCostTable in Node VM and verify rendered HTML rows and total."""
