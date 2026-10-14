@@ -6,20 +6,28 @@ Tài liệu này ghi nhận toàn bộ các quyết định nghiệp vụ và k�
 
 ## 1. Quy tắc Chi phí vận chuyển (`S1–S11`) & Quyết định Mã phân tích trên Odoo TEST
 
-### 1.1. Tập mã phân tích vận chuyển (`S1`)
-1. **Discovery bao gồm cả mã đã lưu trữ (`active=False`)**:
-   - Mọi truy vấn `account.analytic.account` phục vụ nhận diện mã vận chuyển bắt buộc truyền `context={'active_test': False}` để không bỏ sót các mã đã lưu trữ có phát sinh bút toán lịch sử (`518`: `SC_Shipping Cost to Customers`, `1237`: `[ORD] SC_Shipping Cost to Customers`).
-2. **Danh sách nền cố định (`SHIPPING_ANALYTIC_ACCOUNT_IDS_FALLBACK`)**:
-   - **10 mã nền SC**: `518, 1237, 566, 1239, 1270, 1271, 1518, 1519, 1522, 1523`.
-   - **2 mã BD giao hàng cho khách**: `506` (`BD_Shipping cost to clients`), `1427` (`[ORD] BD_Shipping cost to clients`).
-   - **1 mã SC import cước vận chuyển phát hiện qua từ khóa**: `1486` (`SC_Shipping Cost for Import`).
-   - Tổng cộng tập S1 chuẩn trên Odoo TEST gồm **13 mã**: `{506, 518, 566, 1237, 1239, 1270, 1271, 1427, 1486, 1518, 1519, 1522, 1523}`.
-3. **Quyết định đối với mã `1439`, `568`, `1238` (theo S1d)**:
+### 1.1. Tập mã phân tích vận chuyển (`S1`) — Chỉ tính plan `Departments / SC Dept`
+1. **Quyết định của Owner (chốt ngày 14/10/2026)**:
+   - **Chỉ tính các mã vận chuyển thuộc plan `Departments / SC Dept` (`plan_id=7`)**.
+   - **Không tính các mã thuộc plan `Departments / BD Dept` (`plan_id=6`)**:
+     - `506`: `BD_Shipping (CLT, demo...)` (năm 2026 trên TEST: `10,744,753 VND`, trong đó đã gắn dự án `168,736 VND`, chưa gắn dự án `10,576,017 VND`).
+     - `1427`: `ORD - BD_Shipping (CLT, demo...)` (năm 2026 trên TEST: `3,526,000 VND`, chưa gắn dự án).
+     - `1486`: `BD_Rework_Rush logistics` (năm 2026 trên TEST: `0 VND`).
+     - **Lý do nghiệp vụ**: Đây là chi phí gửi mẫu/demo/bán hàng của bộ phận BD (Business Development), không tính vào chỉ tiêu Chi phí vận chuyển chuỗi cung ứng (`SC Dept`).
+2. **Discovery bao gồm cả mã đã lưu trữ (`active=False`) trong phạm vi `Departments / SC Dept`**:
+   - Mọi truy vấn `account.analytic.account` phục vụ nhận diện mã vận chuyển bắt buộc truyền `context={'active_test': False}` và giới hạn trong plan `Departments / SC Dept` để lấy đủ cả các mã đã lưu trữ có phát sinh bút toán lịch sử (`518`: `SC_Shipping Cost to Customers`, `1237`: `[ORD] SC_Shipping Cost to Customers`) mà không kéo nhầm mã của `BD Dept`.
+3. **Danh sách 10 mã vận chuyển `SC Dept` chuẩn (`SHIPPING_ANALYTIC_ACCOUNT_IDS_FALLBACK`)**:
+   - **10 mã `SC Dept`**: `{518, 1237, 566, 1239, 1270, 1271, 1518, 1519, 1522, 1523}`.
+   - **Số liệu thực tế năm 2026 trên Odoo TEST cho 10 mã `SC Dept`**:
+     - **Tổng chi phí vận chuyển năm 2026 (`shipping_company_total`)**: **`1,047,070,262 VND`**
+     - **Đã gắn dự án (`shipping_total`)**: **`868,694,565 VND`** (trong đó qua PO: `707,127,893 VND`, ngoài PO: `161,566,672 VND`)
+     - **Chưa gắn dự án (`shipping_unassigned_total`)**: **`178,375,697 VND`**
+4. **Quyết định đối với các mã `1439`, `568`, `1238` (theo S1d)**:
    - Qua khảo sát thực tế trên Odoo TEST (`tools/reconcile_shipping.py` / `/tmp/roi_recon/account_decisions.md`):
-     - `1439` (`SC_Trips in processing SO`, plan `Departments / SC Dept`, cột `x_plan5_id`): Tên mã không chứa từ khóa vận chuyển/giao hàng/logistics/ship/cước; nội dung chứng từ thực tế là chi phí đi công tác/di chuyển khảo sát khi xử lý đơn hàng (2026: `10,127,208 VND`). **Quyết định: Loại khỏi tập S1 mặc định**.
-     - `568` (`SC_Car related (fuel, maintainnance...)`, plan `Departments / SC Dept`, cột `x_plan5_id`): Tên mã không chứa từ khóa vận chuyển; nội dung là chi phí xăng xe, phí cầu đường VETC, bảo dưỡng xe nội bộ (2026: `20,213,800 VND`, 100% không gắn dự án). **Quyết định: Loại khỏi tập S1 mặc định**.
-     - `1238` (`[ORD] SC_Car related`, `active=False`): Không có phát sinh (`0 VND`). **Quyết định: Loại khỏi tập S1 mặc định**.
-   - **Lưu ý đối chiếu**: Nếu cộng thêm `1439` (`10.13tr`) và `568` (`20.21tr`) vào tổng tập S1 năm 2026 (`1,061,341,015 VND`), tổng công ty sẽ là `1,091,682,023 VND` (`1.091,7tr`). Nếu nghiệp vụ muốn gộp cả 2 mã này, có thể cấu hình tức thì qua biến môi trường `SHIPPING_ANALYTIC_IDS` mà không cần sửa code.
+     - `1439`: `SC_Trips in processing SO` (plan `Departments / SC Dept`, cột `x_plan5_id`) — Tên mã không chứa từ khóa vận chuyển/giao hàng/logistics/ship/cước; nội dung chứng từ là chi phí đi công tác/khảo sát khi xử lý đơn hàng. Số tiền năm 2026 trên TEST: **`43,321,335 VND`** (đã gắn dự án: `196,000 VND`, chưa gắn dự án: `43,125,335 VND`). **Quyết định: Loại khỏi tập S1 mặc định**.
+     - `568`: `SC_Car related (fuel, maintainnance...)` (plan `Departments / SC Dept`, cột `x_plan5_id`) — Tên mã không chứa từ khóa vận chuyển; nội dung là chi phí xăng xe, phí cầu đường VETC, bảo dưỡng xe nội bộ. Số tiền năm 2026 trên TEST: **`10,261,877 VND`** (100% chưa gắn dự án). **Quyết định: Loại khỏi tập S1 mặc định**.
+     - `1238`: `[ORD] SC_Car related` (`active=False`, plan `Departments / SC Dept`) — Số tiền năm 2026 trên TEST: **`0 VND`**. **Quyết định: Loại khỏi tập S1 mặc định**.
+   - Nếu cần thay đổi tập mã vận chuyển theo yêu cầu quản trị trong tương lai, có thể cấu hình qua biến môi trường `SHIPPING_ANALYTIC_IDS`.
 
 ### 1.2. Nguồn số liệu, Phân bổ, PO, Loại chứng từ & Gán tháng (`S2–S11`)
 - **S2 (Nguồn số liệu & Tỷ lệ phân bổ)**:
@@ -35,8 +43,8 @@ Tài liệu này ghi nhận toàn bộ các quyết định nghiệp vụ và k�
   - Các dòng AAL thuộc tập S1 nhưng `account_id = False` được tổng hợp vào `summary["shipping_unassigned_total"]`, `summary["shipping_by_month"][month]["unassigned"]`, và truy xuất chi tiết qua endpoint `GET /api/shipping/unassigned?date_from=&company=&format=csv`.
   - Bất biến cấp công ty: `shipping_total + shipping_unassigned_total == shipping_company_total`.
 - **S9 (Bất biến cấu thành chi phí ở màn chi tiết `build_project_dashboard`)**:
-  - Phần ship qua PO được tách ra khỏi mục `Đơn mua hàng`; phần ship không qua PO được tách ra khỏi mục `Chi phí khác`.
-  - Bỏ `max(0, ...)` để bảo toàn dấu âm của các khoản giảm trừ/điều chỉnh và đảm bảo bất biến:
+  - Khấu trừ từng phần chi phí vận chuyển (`po`, `vendor_bill`, `expense`, `other`) đúng vào mục gốc tương ứng trên panel lợi nhuận của Odoo (`purchase_order`, `other_purchase_costs`/`vendor_bills`, `expenses`, `other`) nơi khoản đó được Odoo gom vào.
+  - Giới hạn mức khấu trừ tối đa bằng số dư của từng mục gốc không âm để không sinh ra mục `"Chi phí khác"` bị âm giả tạo (như khi panel dùng `untaxed_amount` cho `hr.expense` còn AAL dùng `total_amount` có VAT), đồng thời bảo toàn dấu âm thực sự của các khoản giảm trừ/hoàn tiền và đảm bảo bất biến:
     `sum(item["expected"] for item in custom_cost_breakdown) == profitability_costs["expected_cost_total"]`.
 
 ---

@@ -74,11 +74,11 @@ class ShippingDetectionTest(unittest.TestCase):
 
     def test_dynamic_discovery_includes_sc_accounts_excludes_bd(self):
         ids = self.service._get_shipping_account_ids()
-        sc_ids = {1519, 1518, 1271, 566, 1522, 1523, 1270, 1239}
+        sc_ids = {518, 1237, 1519, 1518, 1271, 566, 1522, 1523, 1270, 1239}
         for sid in sc_ids:
             self.assertIn(sid, ids, f"SC shipping account {sid} not in dynamic whitelist")
-        for bd_id in {506, 1427}:
-            self.assertIn(bd_id, ids, f"BD shipping account {bd_id} must be included per Rule S1(c)")
+        for bd_id in {506, 1427, 1486}:
+            self.assertNotIn(bd_id, ids, f"BD shipping account {bd_id} must be excluded (SC Dept only)")
         for excluded_id in {1439, 568, 510}:
             self.assertNotIn(excluded_id, ids, f"Excluded non-shipping account {excluded_id} leaked into whitelist")
 
@@ -92,13 +92,15 @@ class ShippingDetectionTest(unittest.TestCase):
         svc._shipping_account_ids_lock = __import__("threading").Lock()
         svc._shipping_account_ids_refresh_at = 0.0
         ids = svc._get_shipping_account_ids()
-        # When Odoo discovery fails, fallback should still cover all 8 SC accounts.
-        for sid in {566, 1239, 1270, 1271, 1518, 1519, 1522, 1523}:
+        # When Odoo discovery fails, fallback should still cover all 10 SC accounts and exclude BD.
+        for sid in {518, 1237, 566, 1239, 1270, 1271, 1518, 1519, 1522, 1523}:
             self.assertIn(sid, ids)
+        for bd_id in {506, 1427, 1486}:
+            self.assertNotIn(bd_id, ids)
 
     def test_is_shipping_distribution_matches_each_sc_account(self):
         # After _get_shipping_account_ids runs, every SC shipping account should match.
-        for sid in (1519, 1518, 1271, 566, 1522, 1523, 1270, 1239):
+        for sid in (518, 1237, 1519, 1518, 1271, 566, 1522, 1523, 1270, 1239):
             dist = {f"{sid},1781": 100.0}
             self.assertTrue(
                 self.service._is_shipping_distribution(dist),
@@ -108,7 +110,7 @@ class ShippingDetectionTest(unittest.TestCase):
     def test_is_shipping_distribution_rejects_non_shipping_accounts(self):
         # Even if project account 1781 is present, a non-shipping account alone
         # must not classify the line as shipping.
-        non_ship_ids = (1236, 1781, 13, 99)
+        non_ship_ids = (506, 1427, 1486, 1439, 568, 1236, 1781, 13, 99)
         for nid in non_ship_ids:
             dist = {f"{nid}": 100.0}
             self.assertFalse(

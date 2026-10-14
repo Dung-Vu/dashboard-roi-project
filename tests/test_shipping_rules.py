@@ -39,14 +39,14 @@ class ShippingRulesTest(unittest.TestCase):
             return service
 
     def test_s1_archived_518_1237_and_bd_506_1427_discovered_with_active_test_false(self) -> None:
-        """S1: Archived accounts 518, 1237 and BD accounts 506, 1427 + keywords ('giao hàng', 'cước') are discovered with active_test=False."""
+        """S1 (Owner Decision): Only SC Dept shipping accounts (including archived 518, 1237) are counted; BD accounts (506, 1427, 1486) and SC non-shipping (1439, 568) are excluded."""
         records = build_base_synthetic_records()
-        # Add an archived custom shipping account with keyword 'cước' on a non-SC plan
+        # Add an archived custom shipping account with keyword 'cước' on SC Dept plan
         records["account.analytic.account"].append(
             {
                 "id": 1999,
                 "name": "Cước giao hàng nội thành (Archived)",
-                "plan_id": [7, "Vận hành"],
+                "plan_id": [7, "Departments / SC Dept"],
                 "active": False,
             }
         )
@@ -135,6 +135,42 @@ class ShippingRulesTest(unittest.TestCase):
                 "company_id": [1, "Bonario Synthetic"],
                 "analytic_distribution": {"101,1999": 100},
             },
+            {
+                "id": 506,
+                "date": "2026-03-10",
+                "name": f"Bill BD 1486 - {SYNTHETIC_VENDOR_GAMMA}",
+                "move_id": [906, "BILL/2026/006"],
+                "parent_state": "posted",
+                "move_type": "in_invoice",
+                "balance": 3_000_000,
+                "purchase_line_id": False,
+                "company_id": [1, "Bonario Synthetic"],
+                "analytic_distribution": {"101,1486": 100},
+            },
+            {
+                "id": 507,
+                "date": "2026-03-11",
+                "name": f"Bill SC Trip 1439 - {SYNTHETIC_VENDOR_GAMMA}",
+                "move_id": [907, "BILL/2026/007"],
+                "parent_state": "posted",
+                "move_type": "in_invoice",
+                "balance": 4_000_000,
+                "purchase_line_id": False,
+                "company_id": [1, "Bonario Synthetic"],
+                "analytic_distribution": {"101,1439": 100},
+            },
+            {
+                "id": 508,
+                "date": "2026-03-12",
+                "name": f"Bill SC Car 568 - {SYNTHETIC_VENDOR_GAMMA}",
+                "move_id": [908, "BILL/2026/008"],
+                "parent_state": "posted",
+                "move_type": "in_invoice",
+                "balance": 5_000_000,
+                "purchase_line_id": False,
+                "company_id": [1, "Bonario Synthetic"],
+                "analytic_distribution": {"101,568": 100},
+            },
         ]
         records["account.analytic.line"] = [
             {
@@ -143,7 +179,7 @@ class ShippingRulesTest(unittest.TestCase):
                 "name": "Ship 518",
                 "amount": -1_000_000,
                 "account_id": [101, "AA-DA-101"],
-                "x_plan5_id": [518, "[ARCHIVED] Logistics 518"],
+                "x_plan5_id": [518, "2-SC_Logistics"],
                 "move_line_id": [501, "BILL/2026/001"],
                 "company_id": [1, "Bonario Synthetic"],
                 "category": "vendor_bill",
@@ -154,7 +190,7 @@ class ShippingRulesTest(unittest.TestCase):
                 "name": "Ship 1237",
                 "amount": -2_000_000,
                 "account_id": [101, "AA-DA-101"],
-                "x_plan5_id": [1237, "[ARCHIVED] Ship 1237"],
+                "x_plan5_id": [1237, "[ORD] 2-SC_Logistics"],
                 "move_line_id": [502, "BILL/2026/002"],
                 "company_id": [1, "Bonario Synthetic"],
                 "category": "vendor_bill",
@@ -165,7 +201,7 @@ class ShippingRulesTest(unittest.TestCase):
                 "name": "Ship 506",
                 "amount": -1_500_000,
                 "account_id": [101, "AA-DA-101"],
-                "x_plan5_id": [506, "BD - Vận chuyển 506"],
+                "x_plan5_id": [506, "BD_Shipping (CLT, demo...)"],
                 "move_line_id": [503, "BILL/2026/003"],
                 "company_id": [1, "Bonario Synthetic"],
                 "category": "vendor_bill",
@@ -176,7 +212,7 @@ class ShippingRulesTest(unittest.TestCase):
                 "name": "Ship 1427",
                 "amount": -2_500_000,
                 "account_id": [101, "AA-DA-101"],
-                "x_plan5_id": [1427, "[ORD] BD - Giao hàng 1427"],
+                "x_plan5_id": [1427, "ORD - BD_Shipping (CLT, demo...)"],
                 "move_line_id": [504, "BILL/2026/004"],
                 "company_id": [1, "Bonario Synthetic"],
                 "category": "vendor_bill",
@@ -192,6 +228,39 @@ class ShippingRulesTest(unittest.TestCase):
                 "company_id": [1, "Bonario Synthetic"],
                 "category": "vendor_bill",
             },
+            {
+                "id": 6,
+                "date": "2026-03-10",
+                "name": "BD Rework 1486",
+                "amount": -3_000_000,
+                "account_id": [101, "AA-DA-101"],
+                "x_plan5_id": [1486, "BD_Rework_Rush logistics"],
+                "move_line_id": [506, "BILL/2026/006"],
+                "company_id": [1, "Bonario Synthetic"],
+                "category": "vendor_bill",
+            },
+            {
+                "id": 7,
+                "date": "2026-03-11",
+                "name": "SC Trip 1439",
+                "amount": -4_000_000,
+                "account_id": [101, "AA-DA-101"],
+                "x_plan5_id": [1439, "SC_Trips in processing SO"],
+                "move_line_id": [507, "BILL/2026/007"],
+                "company_id": [1, "Bonario Synthetic"],
+                "category": "vendor_bill",
+            },
+            {
+                "id": 8,
+                "date": "2026-03-12",
+                "name": "SC Car 568",
+                "amount": -5_000_000,
+                "account_id": [101, "AA-DA-101"],
+                "x_plan5_id": [568, "SC_Car related (fuel, maintainnance...)"],
+                "move_line_id": [508, "BILL/2026/008"],
+                "company_id": [1, "Bonario Synthetic"],
+                "category": "vendor_bill",
+            },
         ]
 
         client = SyntheticOdooClient(
@@ -199,7 +268,7 @@ class ShippingRulesTest(unittest.TestCase):
             panels={
                 100: {
                     "profitability_items": {
-                        "costs": {"data": [{"id": "other", "billed": -7_500_000, "to_bill": 0}]}
+                        "costs": {"data": [{"id": "other", "billed": -19_500_000, "to_bill": 0}]}
                     }
                 }
             },
@@ -207,10 +276,15 @@ class ShippingRulesTest(unittest.TestCase):
         service = self._make_service(client)
 
         shipping_ids = service._get_shipping_account_ids()
-        expected_base = {518, 1237, 566, 1239, 1270, 1271, 1518, 1519, 1522, 1523, 506, 1427, 1999}
+        expected_base = {518, 1237, 566, 1239, 1270, 1271, 1518, 1519, 1522, 1523, 1999}
+        excluded_ids = {506, 1427, 1486, 1439, 568}
         self.assertTrue(
             expected_base.issubset(shipping_ids),
-            f"Missing shipping IDs: {expected_base - shipping_ids}",
+            f"Missing SC shipping IDs: {expected_base - shipping_ids}",
+        )
+        self.assertTrue(
+            shipping_ids.isdisjoint(excluded_ids),
+            f"Excluded IDs must NOT be in shipping_ids: {shipping_ids & excluded_ids}",
         )
 
         # Verify discovery called account.analytic.account with active_test=False
@@ -226,7 +300,8 @@ class ShippingRulesTest(unittest.TestCase):
 
         payload = service.build_projects_dashboard("2026-01-01", refresh=True)
         row = payload["projects"][0]
-        self.assertEqual(row["shipping_cost"], 7_500_000.0)
+        # Only 518 (1M) + 1237 (2M) + 1999 (0.5M) = 3,500,000; 506, 1427, 1486, 1439, 568 excluded!
+        self.assertEqual(row["shipping_cost"], 3_500_000.0)
 
     def test_s1_env_override_shipping_analytic_ids(self) -> None:
         """S1: SHIPPING_ANALYTIC_IDS environment variable overrides/extends shipping account IDs."""

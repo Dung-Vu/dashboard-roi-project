@@ -74,8 +74,6 @@ SHIPPING_ANALYTIC_ACCOUNT_IDS_FALLBACK = frozenset({
     1523,  # [ORD] SC - Logistics SO (Ordinaire SC)
     1270,  # [ORD] SC - Rush logistics - Ship gấp (Ordinaire SC)
     1239,  # [ORD] SC_Shipping (CLT, demo...) (Ordinaire SC)
-    506,   # BD_Shipping (CLT, demo...) (Bonario BD)
-    1427,  # ORD - BD_Shipping (CLT, demo...) (Ordinaire BD)
 })
 SHIPPING_ACCOUNT_NAME_KEYWORDS = (
     "logistics",
@@ -86,19 +84,16 @@ SHIPPING_ACCOUNT_NAME_KEYWORDS = (
     "shipping",
 )
 EXCLUDED_SHIPPING_ACCOUNT_IDS = frozenset({
-    1439,  # SC_Trips in processing SO (business trip hotel/meals)
-    568,   # SC_Car related (fuel, maintainnance...)
-    1238,  # [ORD] SC_Car related (fuel, maintainnance...)
+    1439,  # SC_Trips in processing SO (SC Dept, business trip expenses)
+    568,   # SC_Car related (fuel, maintainnance...) (SC Dept, car fuel/maintenance)
+    1238,  # [ORD] SC_Car related (fuel, maintainnance...) (SC Dept, car fuel/maintenance)
+    506,   # BD_Shipping (CLT, demo...) (BD Dept, excluded per Owner decision)
+    1427,  # ORD - BD_Shipping (CLT, demo...) (BD Dept, excluded per Owner decision)
+    1486,  # BD_Rework_Rush logistics (BD Dept, excluded per Owner decision)
     510,   # BD_Networking & Partnerships (substring 'ship' trap)
     552,   # OPS_Networking & Partnerships (substring 'ship' trap)
     1426,  # ORD - BD_Networking & Partnerships (substring 'ship' trap)
 })
-NON_DEPARTMENT_PLAN_KEYWORDS = (
-    "odoo projects",
-    "furny projects",
-    "cost type",
-    "business units",
-)
 SHIPPING_ACCOUNT_REFRESH_SECONDS = 86400
 
 
@@ -162,6 +157,15 @@ class DashboardService:
             return True
         return False
 
+    @staticmethod
+    def _is_sc_department_plan(plan_ref: Any) -> bool:
+        plan_name = (relation_name(plan_ref) or "").strip().lower()
+        if not plan_name or "bd" in plan_name:
+            return False
+        if "sc dept" in plan_name or plan_name == "sc" or plan_name.endswith("/ sc"):
+            return True
+        return bool(re.search(r"(?<![a-z])sc(?![a-z])", plan_name))
+
     def _get_shipping_account_ids(self) -> set[int]:
         now = time.time()
         with self._shipping_account_ids_lock:
@@ -171,14 +175,19 @@ class DashboardService:
             ):
                 return self._shipping_account_ids
             ids = set(SHIPPING_ANALYTIC_ACCOUNT_IDS_FALLBACK)
+            override_ids: set[int] = set()
             env_override = os.getenv("SHIPPING_ANALYTIC_IDS", "").strip()
             if env_override:
                 for raw_part in env_override.split(","):
                     part = raw_part.strip()
                     if part.isdigit():
-                        ids.add(int(part))
+                        val = int(part)
+                        override_ids.add(val)
+                        ids.add(val)
 
             domain = [
+                "&",
+                ("plan_id.name", "ilike", "SC"),
                 "|", "|", "|", "|",
                 ("name", "ilike", "logistics"),
                 ("name", "ilike", "ship"),
@@ -205,14 +214,15 @@ class DashboardService:
                         ["id", "name", "plan_id"],
                         limit=1000,
                     )
+                if not hasattr(self, "_shipping_account_names"):
+                    self._shipping_account_names = {}
                 for acc in accounts:
                     acc_id = int(acc["id"])
                     acc_name = acc.get("name") or ""
                     self._shipping_account_names[acc_id] = acc_name
-                    if acc_id in EXCLUDED_SHIPPING_ACCOUNT_IDS:
+                    if acc_id in EXCLUDED_SHIPPING_ACCOUNT_IDS and acc_id not in override_ids:
                         continue
-                    plan_name = (relation_name(acc.get("plan_id")) or "").lower()
-                    if any(non_dept in plan_name for non_dept in NON_DEPARTMENT_PLAN_KEYWORDS):
+                    if not self._is_sc_department_plan(acc.get("plan_id")):
                         continue
                     if self._matches_shipping_account_name(acc_name):
                         ids.add(acc_id)

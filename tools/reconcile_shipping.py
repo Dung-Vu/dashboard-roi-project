@@ -48,7 +48,7 @@ BASE_10_SHIPPING_IDS = (
     1522,
     1523,
 )
-BD_SHIPPING_IDS = (506, 1427)
+BD_SHIPPING_IDS = (506, 1427, 1486)
 CANDIDATE_REVIEW_IDS = (1439, 568, 1238)
 FALSE_POSITIVE_PARTNERSHIP_IDS = (510, 552, 1426)
 
@@ -414,6 +414,12 @@ def main() -> None:
     # -------------------------------------------------------------------------
     # STEP 3: S1 Shipping Account Discovery & Candidate Evaluation
     # -------------------------------------------------------------------------
+    sc_plan_ids: set[int] = set()
+    for p in plans:
+        pname = (p.get("complete_name") or p.get("name") or "").lower()
+        if "sc dept" in pname or pname == "sc" or pname.endswith("/ sc"):
+            sc_plan_ids.add(p["id"])
+
     discovered_dept_accounts: list[dict[str, Any]] = []
     naive_substring_traps: list[dict[str, Any]] = []
     for acc in all_accounts:
@@ -422,13 +428,13 @@ def main() -> None:
             continue
         aname = acc.get("name") or ""
         matched_kws = match_shipping_keywords(aname)
-        if matched_kws:
+        if matched_kws and pid in sc_plan_ids and acc["id"] not in CANDIDATE_REVIEW_IDS:
             discovered_dept_accounts.append(acc)
-        elif any(kw in aname.lower() for kw in DISCOVERY_KEYWORDS):
+        elif any(kw in aname.lower() for kw in DISCOVERY_KEYWORDS) and not matched_kws:
             # Matched naive substring (e.g. 'ship' inside 'Partnerships') but rejected by word-boundary!
             naive_substring_traps.append(acc)
 
-    print(f"[SA-4] Word-boundary keyword-matched accounts on non-project plans ({len(discovered_dept_accounts)}):")
+    print(f"[SA-4] Word-boundary keyword-matched accounts on SC Dept plan ({len(discovered_dept_accounts)}):")
     for acc in sorted(discovered_dept_accounts, key=lambda x: x["id"]):
         print(
             f"  - ID {acc['id']}: name={acc.get('name')!r}, plan={acc.get('plan_id')}, "
@@ -473,7 +479,7 @@ def main() -> None:
             ),
         }
 
-    # Build official S1 shipping account ID set
+    # Build official S1 shipping account ID set (SC Dept only per owner decision)
     env_override = os.environ.get("SHIPPING_ANALYTIC_IDS", "").strip()
     if env_override:
         s1_shipping_ids = {int(x.strip()) for x in env_override.split(",") if x.strip()}
@@ -481,17 +487,17 @@ def main() -> None:
     else:
         s1_shipping_ids = (
             set(BASE_10_SHIPPING_IDS)
-            | set(BD_SHIPPING_IDS)
             | s1d_included_ids
             | {acc["id"] for acc in discovered_dept_accounts}
-        )
-    s1_core_12_ids = set(BASE_10_SHIPPING_IDS) | set(BD_SHIPPING_IDS)
-    print(f"[SA-4] Core 12 S1 IDs (10 SC + 2 BD): {sorted(s1_core_12_ids)}")
-    print(f"[SA-4] Full S1 shipping analytic account IDs (with keyword discovery): {sorted(s1_shipping_ids)}")
+        ) - set(BD_SHIPPING_IDS)
+    s1_core_10_ids = set(BASE_10_SHIPPING_IDS)
+    print(f"[SA-4] Core 10 S1 IDs (SC Dept only): {sorted(s1_core_10_ids)}")
+    print(f"[SA-4] Full S1 shipping analytic account IDs (SC Dept only): {sorted(s1_shipping_ids)}")
 
-    # Inspect all S1 accounts + S1(d) candidates + naive substring traps (510, 552, 1426)
+    # Inspect all S1 accounts + excluded BD accounts + S1(d) candidates + naive substring traps (510, 552, 1426)
     all_inspect_ids = sorted(
         s1_shipping_ids
+        | set(BD_SHIPPING_IDS)
         | set(CANDIDATE_REVIEW_IDS)
         | {acc["id"] for acc in naive_substring_traps}
     )
@@ -1416,7 +1422,7 @@ def main() -> None:
     truth_summary = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "rpc_calls_count": client.call_count,
-        "s1_core_12_account_ids": sorted(s1_core_12_ids),
+        "s1_core_10_account_ids": sorted(s1_core_10_ids),
         "s1_shipping_account_ids": sorted(s1_shipping_ids),
         "s1_shipping_accounts": [
             {
@@ -1502,9 +1508,9 @@ def main() -> None:
         "### Kết luận kiểm tra cột lưu trữ mã SC (`plan_id=7`) và mã BD (`506, 1427`, `plan_id=6`):",
         "- Cả `Departments / BD Dept` (`plan_id=6`) và `Departments / SC Dept` (`plan_id=7`) đều là plan con của root plan `Departments` (`plan_id=5`).",
         "- Trong Odoo 17+, mỗi root plan có đúng 1 cột trên `account.analytic.line` (`x_plan5_id` ứng với root plan `Departments` ID=5, còn `account_id` ứng với root plan `Odoo Projects` ID=1).",
-        "- Do đó, **toàn bộ 10 mã SC và 2 mã BD (`506`, `1427`) đều nằm ở cột `x_plan5_id`** trên `account.analytic.line`.",
+        "- Do đó, **toàn bộ 10 mã SC đều nằm ở cột `x_plan5_id`** trên `account.analytic.line`.",
         "",
-        "## 2. Chi tiết Tập Mã Phân Tích Vận Chuyển (S1), Ứng Viên S1(d) & Bẫy Substring",
+        "## 2. Chi tiết Tập Mã Phân Tích Vận Chuyển (S1), Mã BD Loại Trừ, Ứng Viên S1(d) & Bẫy Substring",
         "",
         "| ID | Tên mã phân tích | Plan | Active | Cột AAL | Dòng 2026 | Tổng 2026 (VND) | Đã gắn DA 2026 | Chưa gắn DA 2026 | Tổng Lifetime (VND) | Quyết định S1 | Phân nhóm |",
         "|---:|---|---|---|---|---:|---:|---:|---:|---:|---|---|",
@@ -1514,15 +1520,15 @@ def main() -> None:
     for aid in sorted(all_inspect_ids):
         st = per_ship_acc_stats[aid]
         if aid in BASE_10_SHIPPING_IDS:
-            group_label = "S1(b) 10 mã nền SC"
+            group_label = "S1(b) 10 mã nền SC Dept"
         elif aid in BD_SHIPPING_IDS:
-            group_label = "S1(c) 2 mã BD ship"
+            group_label = "Loại trừ: Mã thuộc BD Dept (chi phí bán hàng/gửi mẫu)"
         elif aid in CANDIDATE_REVIEW_IDS:
-            group_label = "S1(d) Ứng viên kiểm tra"
+            group_label = "S1(d) Ứng viên kiểm tra (không phải vận chuyển)"
         elif aid in trap_ids:
             group_label = "Bẫy substring 'ship' trong 'Partnerships'"
         else:
-            group_label = "S1(e) Discovery từ khoá"
+            group_label = "S1(e) Discovery từ khoá (SC Dept)"
         decision_str = "**ĐƯA VÀO (INCLUDED)**" if st["in_s1"] else "LOẠI RA (EXCLUDED)"
         cols_str = ", ".join(f"`{c}`" for c in st["aal_columns"]) or "-"
         md_lines.append(
