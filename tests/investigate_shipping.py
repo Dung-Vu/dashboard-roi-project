@@ -9,10 +9,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from odoo_client import OdooAPI, OdooAPIError
 
-ODOO_URL = "https://bonario-vietnam.odoo.com"
-ODOO_DB = "bonario-vietnam"
-ODOO_USER_ID = 208
-ODOO_API_KEY = os.environ["ODOO_API_KEY"]
+ODOO_URL = os.environ.get("ODOO_TEST_URL") or os.environ.get("ODOO_URL", "")
+ODOO_DB = os.environ.get("ODOO_TEST_DB") or os.environ.get("ODOO_DB", "")
+ODOO_USER_ID = int(os.environ.get("ODOO_TEST_UID") or os.environ.get("ODOO_USER_ID", "208"))
+ODOO_API_KEY = os.environ.get("ODOO_TEST_API_KEY") or os.environ["ODOO_API_KEY"]
 
 SHIPPING_ACCOUNT_PARTS = {"1519", "1271"}
 

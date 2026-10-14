@@ -8,7 +8,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from odoo_client import OdooAPI
 from dashboard_service import DashboardService
 
-client = OdooAPI("https://bonario-vietnam.odoo.com", "bonario-vietnam", 208, os.environ["ODOO_API_KEY"])
+client = OdooAPI(
+    os.environ.get("ODOO_TEST_URL") or os.environ.get("ODOO_URL", ""),
+    os.environ.get("ODOO_TEST_DB") or os.environ.get("ODOO_DB", ""),
+    int(os.environ.get("ODOO_TEST_UID") or os.environ.get("ODOO_USER_ID", "208")),
+    os.environ.get("ODOO_TEST_API_KEY") or os.environ["ODOO_API_KEY"],
+)
 service = DashboardService(client)
 
 ACCOUNT_ID = 1781  # O-BG-2606-0330
